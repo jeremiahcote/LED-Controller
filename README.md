@@ -1,1 +1,1 @@
-# led-room-controller
+# led-room-controller (MAC)
