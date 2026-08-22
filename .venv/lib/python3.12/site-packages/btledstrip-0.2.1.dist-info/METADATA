@@ -1,0 +1,25 @@
+Metadata-Version: 2.3
+Name: btledstrip
+Version: 0.2.1
+Summary: Python LED Strip Bluetooth Controller API
+Project-URL: Homepage, https://github.com/dougppaz/python-bt-led-strip
+Project-URL: Documentation, https://python-bt-led-strip.readthedocs.io/en/latest/
+Project-URL: Issues, https://github.com/dougppaz/python-bt-led-strip/issues
+Author-email: Douglas Paz <eu@douglaspaz.com>
+License-File: LICENSE
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.12
+Requires-Dist: bleak==0.22.1
+Requires-Dist: dbus-fast==2.21.2
+Description-Content-Type: text/markdown
+
+# Python LED Strip Bluetooth Controller API
+
+Compatible with MELK devices.
+
+- [Read the Docs](https://python-bt-led-strip.readthedocs.io/)
+- Code ~copied~ inspired by [dave-code-ruiz/elkbledom](https://github.com/dave-code-ruiz/elkbledom/) implemented with [bleak](https://github.com/hbldh/bleak)
+- Developers
+  - [Douglas Paz](https://github.com/dougppaz/)
