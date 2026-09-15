@@ -20,9 +20,8 @@ from btledstrip import BTLedStrip, MELKController
 
 # Windows Bluetooth addresses are real MACs (XX:XX:XX:XX:XX:XX), unlike the
 # CoreBluetooth UUIDs macOS uses. Found via testMAC.py while running on Windows.
-ADDRESS = "36:46:3F:08:93:13"  # QHM-S931, regular LED
-ADDRESS2 = None  # MELK-OA10, secondary LED - not seen yet on this PC's Bluetooth scan.
-                 # Power it on nearby, run `py testMAC.py`, then paste its MAC here.
+ADDRESS = "36:46:3F:08:93:13"   # LED 1 MAC (Bleak)
+ADDRESS2 = "BE:69:ED:24:E6:06"  # LED 2 MAC (MELK / LotusLight X)
 CHAR_UUID = "0000ffd9-0000-1000-8000-00805f9b34fb"  # LED 1 characteristic
 
 
@@ -207,10 +206,6 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
     # ==============================
     # LED 2 - MELKController
     # ==============================
-    if ADDRESS2 is None:
-        print("LED 2: no Windows MAC configured yet, skipping (see ADDRESS2 at top of file)")
-        return
-
     controller = MELKController()
     max_retries = 3
 
@@ -348,10 +343,6 @@ async def main():
 
 
        # LED 2 (MELKController via btledstrip) - retry up to 3 times
-        if ADDRESS2 is None:
-            print("LED 2: no Windows MAC configured yet, skipping (see ADDRESS2 at top of file)")
-            return
-
         controller = MELKController()
         max_retries = 3
 
