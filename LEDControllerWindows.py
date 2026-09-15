@@ -45,6 +45,20 @@ async def bluetoothIsOn() -> bool:
        return False
 
 
+# Windows' WinRT Bluetooth backend hangs during GATT service discovery when
+# connecting directly by MAC address for these strips. Connecting with a
+# BLEDevice object obtained from a live scan avoids the hang, so every
+# connection below resolves the device via BleakScanner first.
+async def resolve_device(address: str, timeout: float = 15.0):
+    print(f"Scanning for {address}...")
+    devices = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    if address not in devices:
+        return None
+    device, adv = devices[address]
+    print(f"  found {address} rssi={adv.rssi}")
+    return device
+
+
 # turn light on or off user input
 def onOrOffIO():
    onOrOff = "test"
@@ -139,7 +153,11 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
     off_command = bytearray([0xCC, 0x24, 0x33])
 
     async def led1_sequence():
-        async with BleakClient(ADDRESS, timeout=10.0) as client:
+        device = await resolve_device(ADDRESS)
+        if device is None:
+            raise RuntimeError(f"LED 1 ({ADDRESS}) not found in scan.")
+
+        async with BleakClient(device, timeout=10.0) as client:
             if onOrOff == "off":
                 print("LED 1: sending OFF")
 
@@ -185,23 +203,38 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
 
                 await asyncio.sleep(0.2)
 
-    try:
-        await asyncio.wait_for(
-            led1_sequence(),
-            timeout=15.0
-        )
+    led1_max_retries = 3
+    for led1_attempt in range(1, led1_max_retries + 1):
+        try:
+            print(f"LED 1: attempt {led1_attempt}")
 
-        print("LED 1: finished")
+            await asyncio.wait_for(
+                led1_sequence(),
+                timeout=30.0
+            )
 
-    except asyncio.TimeoutError:
-        raise RuntimeError(
-            "LED 1 timed out while connecting or sending command."
-        )
+            print("LED 1: finished")
+            break
 
-    except Exception as e:
-        raise RuntimeError(
-            f"LED 1 error: {e}"
-        )
+        except asyncio.TimeoutError:
+            print(f"LED 1 timeout on attempt {led1_attempt}")
+
+            if led1_attempt == led1_max_retries:
+                raise RuntimeError(
+                    "LED 1 timed out after multiple attempts."
+                )
+
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            print(f"LED 1 error on attempt {led1_attempt}: {e}")
+
+            if led1_attempt == led1_max_retries:
+                raise RuntimeError(
+                    f"LED 1 failed after {led1_max_retries} attempts: {e}"
+                )
+
+            await asyncio.sleep(2)
 
     # ==============================
     # LED 2 - MELKController
@@ -210,7 +243,11 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
     max_retries = 3
 
     async def led2_sequence():
-        async with BTLedStrip(controller, ADDRESS2) as led:
+        device2 = await resolve_device(ADDRESS2)
+        if device2 is None:
+            raise RuntimeError(f"LED 2 ({ADDRESS2}) not found in scan.")
+
+        async with BTLedStrip(controller, device2) as led:
             if onOrOff == "off":
                 print("LED 2: sending OFF")
 
@@ -253,7 +290,7 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
 
             await asyncio.wait_for(
                 led2_sequence(),
-                timeout=20.0
+                timeout=35.0
             )
 
             print("LED 2: finished")
@@ -302,7 +339,12 @@ async def main():
 
 
        # LED 1 (Bleak / QHM)
-       async with BleakClient(ADDRESS, timeout=10.0) as client:
+       device = await resolve_device(ADDRESS)
+       if device is None:
+           print(f"LED 1 ({ADDRESS}) not found in scan, skipping")
+           return
+
+       async with BleakClient(device, timeout=10.0) as client:
 
         if onOrOff.lower() == "off":
             off_command = bytearray([0xCC, 0x24, 0x33])
@@ -349,7 +391,16 @@ async def main():
 
         for attempt in range(1, max_retries + 1):
            try:
-               async with BTLedStrip(controller, ADDRESS2) as led:
+               device2 = await resolve_device(ADDRESS2)
+               if device2 is None:
+                   print(f"LED 2 ({ADDRESS2}) not found in scan (attempt {attempt} of {max_retries})")
+                   if attempt < max_retries:
+                       await asyncio.sleep(2)
+                       continue
+                   else:
+                       break
+
+               async with BTLedStrip(controller, device2) as led:
                    if onOrOff.lower() == "off":
                        await led.exec.turn_off()
                        await asyncio.sleep(0.2)
