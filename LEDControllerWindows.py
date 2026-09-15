@@ -49,13 +49,16 @@ async def bluetoothIsOn() -> bool:
 # connecting directly by MAC address for these strips. Connecting with a
 # BLEDevice object obtained from a live scan avoids the hang, so every
 # connection below resolves the device via BleakScanner first.
-async def resolve_device(address: str, timeout: float = 15.0):
+#
+# find_device_by_address() returns as soon as it spots the target, instead of
+# discover()'s fixed-length scan of everything nearby, so this is much faster
+# in the common case where the strip is already advertising.
+async def resolve_device(address: str, timeout: float = 10.0):
     print(f"Scanning for {address}...")
-    devices = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    if address not in devices:
+    device = await BleakScanner.find_device_by_address(address, timeout=timeout)
+    if device is None:
         return None
-    device, adv = devices[address]
-    print(f"  found {address} rssi={adv.rssi}")
+    print(f"  found {address}")
     return device
 
 
