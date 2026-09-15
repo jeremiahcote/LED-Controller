@@ -1,5 +1,5 @@
-# pythonLED_gui_ctk.py
-# Modern GUI using customtkinter for pythonLED.py
+# LEDControllerMacOS_gui_ctk.py
+# Modern GUI using customtkinter for LEDControllerMacOS.py
 
 
 # Must be first lines (helps Bleak on Windows GUI apps)
@@ -21,7 +21,7 @@ import customtkinter as ctk
 from tkinter import colorchooser  # ok to mix for color picker
 
 
-import pythonLED  # your backend (must NOT auto-run on import)
+import LEDControllerMacOS  # your backend (must NOT auto-run on import)
 
 
 
@@ -284,7 +284,7 @@ class App(ctk.CTk):
         asyncio.set_event_loop(loop)
 
         try:
-            coro = pythonLED.apply_from_gui(
+            coro = LEDControllerMacOS.apply_from_gui(
                 power,
                 r,
                 g,
