@@ -293,7 +293,7 @@ class App(ctk.CTk):
             )
 
             loop.run_until_complete(
-                asyncio.wait_for(coro, timeout=20.0)
+                asyncio.wait_for(coro, timeout=120.0)
             )
 
         except asyncio.TimeoutError:
