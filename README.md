@@ -1,1 +1,131 @@
-# led-room-controller (MAC)
+# LED-Controller
+
+Controls the two Bluetooth LED strips in my room from macOS, Windows, and a
+Raspberry Pi ("Navi") that listens for voice commands.
+
+| Strip | Controller | Address | Voice name |
+|---|---|---|---|
+| LED 1 | QHM-S931 | `36:46:3F:08:93:13` | bed lights |
+| LED 2 | MELK-OA10 (LotusLight X) | `BE:69:ED:24:E6:06` | wall lights |
+
+The addresses are the Windows/Linux ones. macOS uses its own CoreBluetooth
+identifiers instead (see `LEDControllerMacOS.py`).
+
+## Files
+
+| File | What it is |
+|---|---|
+| `LEDControllerMacOS.py`, `LEDControllerGUIMacOS.py` | Original macOS script and GUI |
+| `LEDControllerWindows.py` | Bluetooth control used on Windows **and** the Pi |
+| `LEDControllerGUIWindows.py` | Windows GUI |
+| `LEDStartupWindows.py` | Turns the strips cyan; was run by a Windows logon task (now disabled) |
+| `LEDVoiceControl.py` | Voice control ("Navi") |
+| `navi-voice.service` | systemd user service that runs voice control on the Pi |
+| `testMAC.py` | Scans for Bluetooth devices and prints their addresses |
+
+## Voice commands
+
+Everything must start with **"Navi"**, either in the same breath or up to 6
+seconds after saying "Navi" on its own.
+
+- "Navi, wall lights red" / "Navi, bed lights light blue" / "Navi, purple"
+- "Navi, lights off" / "Navi, wall lights off"
+- "Navi, good morning" / "Navi, I'm home" → both cyan
+- "Navi, good night" / "Navi, goodbye" → both off
+
+Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
+orange, white. No "bed"/"wall" means both strips. A new command interrupts one
+that's still running.
+
+## Raspberry Pi setup (Navi)
+
+Pi 4 running Raspberry Pi OS (Debian 13 "Trixie", 64-bit), user `admin`, with a
+PS5 DualSense controller plugged in **by USB** as the microphone. (Bluetooth is
+kept free for the light strips.)
+
+### 1. System settings (need sudo)
+
+```bash
+sudo apt-get update && sudo apt-get install -y libportaudio2
+sudo rfkill unblock bluetooth
+sudo usermod -aG bluetooth admin
+sudo loginctl enable-linger admin
+
+# Rename to "navi". Imager-flashed images use cloud-init, which resets the
+# hostname on every boot unless told not to.
+echo 'preserve_hostname: true' | sudo tee /etc/cloud/cloud.cfg.d/99-keep-hostname.cfg
+sudo raspi-config nonint do_hostname navi
+
+# BlueZ forgets unpaired devices (and their GATT cache) 30s after last seeing
+# them, so every command redid service discovery -- exactly where LED 2 tends
+# to drop. Keep them for a day instead. (0 would mean "never keep", not
+# "forever".)
+sudo sed -i 's/^#TemporaryTimeout = 30$/TemporaryTimeout = 86400/' /etc/bluetooth/main.conf
+sudo systemctl restart bluetooth
+sudo reboot
+```
+
+### 2. Code, Python environment, speech model (no sudo)
+
+```bash
+git clone https://github.com/jeremiahcote/LED-Controller.git ~/LED-Controller
+cd ~/LED-Controller
+
+# Not .venv -- that folder in the repo is an old macOS environment.
+python3 -m venv .venv_pi
+.venv_pi/bin/pip install bleak vosk sounddevice requests
+
+mkdir -p models && cd models
+curl -sSL -o m.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+python3 -c "import zipfile; zipfile.ZipFile('m.zip').extractall('.')" && rm m.zip
+cd ..
+```
+
+### 3. Run at boot
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp navi-voice.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now navi-voice
+```
+
+### Day to day
+
+```bash
+# Live log
+journalctl _SYSTEMD_USER_UNIT=navi-voice.service -f -o cat
+
+# Deploy new code
+cd ~/LED-Controller && git pull && systemctl --user restart navi-voice
+```
+
+From Windows these work through `ssh navi` (see `~/.ssh/config`: host
+`navi.local`, user `admin`, key `~/.ssh/ledpi_ed25519`).
+
+The service restarts itself if it crashes, and also if the mic disappears
+(e.g. the controller is unplugged), so plugging it back in is enough.
+
+## Windows setup
+
+```bash
+py -3 -m venv .venv_win
+.venv_win/Scripts/python -m pip install bleak vosk sounddevice requests customtkinter
+```
+
+Download the Vosk model into `models/` as above. Run the GUI with
+`.venv_win/Scripts/pythonw LEDControllerGUIWindows.py`, or voice control with
+`.venv_win/Scripts/python LEDVoiceControl.py`. Voice control prefers the
+DualSense mic and falls back to the TONOR USB mic.
+
+## Troubleshooting
+
+- **Run only one controller at a time.** Each strip accepts a single
+  connection, so the Pi, the PC, the Mac, and the phone app all compete. Make
+  sure voice control isn't running on the PC while Navi is running.
+- **A strip stops showing up in scans:** unplug it for ~10 seconds.
+- **Addresses:** run `testMAC.py` to list nearby devices.
+- **Why some odd-looking code exists** (the handshake frames, write delays,
+  scanning before connecting, importing `sounddevice` inside a thread): see the
+  comments in `LEDControllerWindows.py` and `LEDVoiceControl.py`. Each one fixes
+  a specific, tested failure.
