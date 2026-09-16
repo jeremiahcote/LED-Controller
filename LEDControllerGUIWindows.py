@@ -71,7 +71,6 @@ class App(ctk.CTk):
 
        self.power = ctk.StringVar(value="on")
        self.color_hex = ctk.StringVar(value="#ffffff")
-       self.brightness = ctk.IntVar(value=100)
 
 
        # Header
@@ -261,12 +260,6 @@ class App(ctk.CTk):
        self.preview.configure(fg_color=self.color_hex.get())
 
 
-   def _on_slider(self, val):
-       v = int(val)
-       self.brightness.set(v)
-       self.brightness_pill.configure(text=str(v))
-
-
    def _set_status(self, msg: str, is_error: bool = False):
        self.status.configure(text=msg, text_color=("#ff8a8a" if is_error else "#9aa7bd"))
 
@@ -274,7 +267,6 @@ class App(ctk.CTk):
    def _apply(self):
     power = self.power.get()
     r, g, b = hex_to_rgb(self.color_hex.get())
-    brightness = int(self.brightness.get())
 
     self.apply_btn.configure(state="disabled", text="Applying...")
     self._set_status("Connecting to LEDs...")
@@ -288,8 +280,7 @@ class App(ctk.CTk):
                 power,
                 r,
                 g,
-                b,
-                brightness
+                b
             )
 
             loop.run_until_complete(

@@ -43,13 +43,12 @@ COLORS = {
 # small model. "[unk]" is what lets everything else fall through as unmatched
 # instead of being forced onto the nearest command.
 GRAMMAR = (
-    ["lights on", "lights off", "lights dim", "lights bright"]
+    ["lights on", "lights off"]
     + [f"lights {name}" for name in COLORS]
     + ["[unk]"]
 )
 
 last_color = (255, 255, 255)
-last_brightness = 100
 
 
 def find_input_device(hint):
@@ -62,30 +61,22 @@ def find_input_device(hint):
 
 
 def parse(text):
-    """Map a recognized phrase to (power, rgb, brightness), or None."""
-    global last_color, last_brightness
+    """Map a recognized phrase to (power, rgb), or None."""
+    global last_color
 
     if not text.startswith("lights "):
         return None
     word = text[len("lights "):].strip()
 
     if word == "off":
-        return "off", (0, 0, 0), 0
+        return "off", (0, 0, 0)
 
     if word == "on":
-        return "on", last_color, last_brightness
-
-    if word == "dim":
-        last_brightness = 25
-        return "on", last_color, last_brightness
-
-    if word == "bright":
-        last_brightness = 100
-        return "on", last_color, last_brightness
+        return "on", last_color
 
     if word in COLORS:
         last_color = COLORS[word]
-        return "on", last_color, last_brightness
+        return "on", last_color
 
     return None
 
@@ -109,10 +100,10 @@ def led_worker(commands):
         if superseded:
             print(f"  (skipping {superseded} superseded command(s))")
 
-        power, (r, g, b), brightness = command
+        power, (r, g, b) = command
 
         try:
-            asyncio.run(led.apply_from_gui(power, r, g, b, brightness))
+            asyncio.run(led.apply_from_gui(power, r, g, b))
         except Exception as e:
             print(f"  LED command failed: {e}")
 
@@ -175,7 +166,7 @@ def main():
                 print(f"  (ignored: {text!r})")
                 continue
 
-            print(f"heard: {text!r} -> {command[0]} rgb={command[1]} brightness={command[2]}")
+            print(f"heard: {text!r} -> {command[0]} rgb={command[1]}")
             commands.put(command)
 
 

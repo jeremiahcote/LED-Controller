@@ -21,7 +21,7 @@ def log(msg: str):
 
 async def main():
     import LEDControllerWindows as led
-    await led.apply_from_gui("on", 0, 255, 255, 100)  # cyan, full brightness
+    await led.apply_from_gui("on", 0, 255, 255)  # cyan
 
 
 if __name__ == "__main__":

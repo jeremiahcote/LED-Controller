@@ -26,6 +26,7 @@ MELK_CHAR_UUID = "0000fff3-0000-1000-8000-00805f9b34fb"  # LED 2 characteristic
 
 RETRIES = 3
 RETRY_BACKOFF = 2.0
+FULL_BRIGHTNESS = 100
 
 # These strips drop an idle connection almost immediately, so the first write
 # has to go out the moment connect() returns -- adding a settle delay there
@@ -190,16 +191,15 @@ def onOrOffIO():
    return onOrOff, r, g, b
 
 
-async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int = 100):
+async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
     onOrOff = onOrOff.lower().strip()
 
     # Clamp values
     r = max(0, min(255, int(r)))
     g = max(0, min(255, int(g)))
     b = max(0, min(255, int(b)))
-    brightness = max(0, min(100, int(brightness)))
 
-    print(f"request: power={onOrOff}, RGB=({r}, {g}, {b}), brightness={brightness}")
+    print(f"request: power={onOrOff}, RGB=({r}, {g}, {b})")
 
     if not await bluetoothIsOn():
         raise RuntimeError("Bluetooth not available or turned off.")
@@ -208,16 +208,10 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, brightness: int =
         led1_commands = [qhm_off()]
         led2_commands = [melk_off()]
     else:
-        # LED 1 has no brightness command, so scale its RGB instead. That way
-        # brightness means the same thing on both strips.
-        r1 = int(r * brightness / 100)
-        g1 = int(g * brightness / 100)
-        b1 = int(b * brightness / 100)
-
         # Colour first, then power on, then colour again -- the strip ignores
         # colour writes made while it's still powered off.
-        led1_commands = [qhm_color(r1, g1, b1), qhm_on(), qhm_color(r1, g1, b1)]
-        led2_commands = [melk_on(), melk_brightness(brightness), melk_color(r, g, b)]
+        led1_commands = [qhm_color(r, g, b), qhm_on(), qhm_color(r, g, b)]
+        led2_commands = [melk_on(), melk_brightness(FULL_BRIGHTNESS), melk_color(r, g, b)]
 
     led1_error = None
     try:
@@ -239,8 +233,7 @@ async def main():
         return
 
     onOrOff, r, g, b = onOrOffIO()
-    brightness = 100 if onOrOff.lower() == "on" else 0
-    await apply_from_gui(onOrOff, r, g, b, brightness)
+    await apply_from_gui(onOrOff, r, g, b)
 
 
 if __name__ == "__main__":
