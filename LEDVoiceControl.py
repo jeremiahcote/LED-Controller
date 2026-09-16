@@ -61,10 +61,6 @@ def find_input_device(hint):
     return None, default["name"]
 
 
-def scale(rgb, percent):
-    return tuple(int(channel * percent / 100) for channel in rgb)
-
-
 def parse(text):
     """Map a recognized phrase to (power, rgb, brightness), or None."""
     global last_color, last_brightness
@@ -113,8 +109,7 @@ def led_worker(commands):
         if superseded:
             print(f"  (skipping {superseded} superseded command(s))")
 
-        power, rgb, brightness = command
-        r, g, b = scale(rgb, brightness) if power == "on" else rgb
+        power, (r, g, b), brightness = command
 
         try:
             asyncio.run(led.apply_from_gui(power, r, g, b, brightness))
