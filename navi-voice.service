@@ -1,0 +1,26 @@
+# systemd *user* service that runs Navi voice control on the Raspberry Pi.
+#
+# Install (as the Pi user, no sudo needed):
+#   mkdir -p ~/.config/systemd/user
+#   cp navi-voice.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now navi-voice
+#
+# Starting at boot without anyone logged in also needs, once:
+#   sudo loginctl enable-linger $USER
+#
+# Logs: journalctl --user -u navi-voice -f
+
+[Unit]
+Description=Navi voice control for the room LED strips
+# Keep retrying indefinitely, e.g. while the controller is unplugged.
+StartLimitIntervalSec=0
+
+[Service]
+WorkingDirectory=%h/LED-Controller
+ExecStart=%h/LED-Controller/.venv_pi/bin/python -u LEDVoiceControl.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

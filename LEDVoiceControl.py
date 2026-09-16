@@ -47,6 +47,8 @@ COMMAND_COOLDOWN = 2.0
 WAKE_WORD = "navi"
 WAKE_WINDOW = 6.0
 
+AUDIO_STALL_TIMEOUT = 10.0
+
 COLORS = {
     "red": (255, 0, 0),
     "green": (0, 255, 0),
@@ -166,6 +168,16 @@ def parse(text):
 
 
 def listen_loop(commands):
+    try:
+        _listen(commands)
+    except Exception as e:
+        # This runs on a daemon thread, so an uncaught error would leave the
+        # process alive but deaf. Exit instead, so it gets restarted.
+        print(f"  listener crashed: {e!r}")
+        os._exit(1)
+
+
+def _listen(commands):
     """Capture audio and recognize speech, queueing commands for the main thread.
 
     Listening runs here rather than the BLE work because of the COM apartment
@@ -204,7 +216,16 @@ def listen_loop(commands):
         awake_until = 0.0
 
         while True:
-            data = audio.get()
+            try:
+                data = audio.get(timeout=AUDIO_STALL_TIMEOUT)
+            except queue.Empty:
+                # A live stream delivers a block several times a second, so
+                # silence here means the mic went away (e.g. the controller was
+                # unplugged). PortAudio doesn't raise in that case, so bail out
+                # and let the service manager restart us against a fresh device.
+                print("  no audio from the mic, exiting so the service can restart")
+                os._exit(1)
+
             if not recognizer.AcceptWaveform(data):
                 continue
 
