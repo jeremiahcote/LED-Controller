@@ -15,6 +15,8 @@ import time
 
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
+import PCControl
+
 # NOTE: sounddevice is deliberately *not* imported here. Importing it
 # initializes COM as STA on whichever thread does the import, and bleak's
 # WinRT backend requires MTA on the thread running BLE. Importing it at module
@@ -70,6 +72,11 @@ COMPOUND_COLORS = {
 # Which strip a phrase refers to. Anything else addresses both.
 TARGETS = {"bed": "led1", "wall": "led2"}
 
+# Mentioning one of these makes the command about the PC rather than the lights.
+PC_WORDS = ["computer", "pc"]
+PC_ON_WORDS = ["on", "wake", "start"]
+PC_OFF_WORDS = ["off", "shut"]
+
 # Phrases that map straight to a scene, addressing both strips. Kept to
 # multi-word phrases: a lone "bye" got inserted by the recognizer into a
 # command that never said it, and turned the lights off. "goodbye" is matched
@@ -90,11 +97,14 @@ PHRASES = {
 # bed lights on red" both work. FILLERS aren't acted on, they just need to be
 # recognizable so they don't force the recognizer to mangle the words around
 # them.
-FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light", "lights"]
+FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light", "lights",
+           "my", "up", "down"]
 
 GRAMMAR = (
     [WAKE_WORD, "on", "off"]
     + FILLERS
+    + PC_WORDS
+    + [w for w in PC_ON_WORDS + PC_OFF_WORDS if w not in ("on", "off")]
     + list(TARGETS)
     + list(COLORS)
     + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
@@ -129,10 +139,20 @@ def after_wake_word(text):
 
 
 def parse(text):
-    """Map a command (the words after the wake word) to (power, rgb, target), or None."""
+    """Map a command (the words after the wake word) to an action, or None.
+
+    Light commands are (power, rgb, target); PC commands are ("pc", "on"|"off").
+    """
     global last_color
 
     words = text.split()
+
+    if any(w in words for w in PC_WORDS):
+        if any(w in words for w in PC_OFF_WORDS):
+            return "pc", "off"
+        if any(w in words for w in PC_ON_WORDS):
+            return "pc", "on"
+        return None
 
     target = "both"
     for word, name in TARGETS.items():
@@ -261,6 +281,17 @@ def _listen(commands):
             command = parse(request)
             if command is None:
                 print(f"  (not a command: {text!r})")
+                continue
+
+            if command[0] == "pc":
+                # Handled right here rather than queued: it's a single UDP send,
+                # and queueing would let a quick follow-up light command
+                # supersede and silently drop it.
+                if command[1] == "on":
+                    PCControl.wake_pc()
+                    print(f"heard: {text!r} -> sent wake packet to the PC")
+                else:
+                    print(f"heard: {text!r} -> turning the PC off isn't set up yet")
                 continue
 
             print(f"heard: {text!r} -> {command[0]} rgb={command[1]} target={command[2]}")

@@ -20,6 +20,7 @@ identifiers instead (see `LEDControllerMacOS.py`).
 | `LEDControllerGUIWindows.py` | Windows GUI |
 | `LEDStartupWindows.py` | Turns the strips cyan; was run by a Windows logon task (now disabled) |
 | `LEDVoiceControl.py` | Voice control ("Navi") |
+| `PCControl.py` | Turns the PC on with Wake-on-LAN |
 | `navi-voice.service` | systemd user service that runs voice control on the Pi |
 | `testMAC.py` | Scans for Bluetooth devices and prints their addresses |
 
@@ -32,6 +33,7 @@ seconds after saying "Navi" on its own.
 - "Navi, lights off" / "Navi, wall lights off"
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
+- "Navi, turn on my computer" / "Navi, wake up my PC" → Wake-on-LAN
 
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
@@ -117,6 +119,20 @@ Download the Vosk model into `models/` as above. Run the GUI with
 `.venv_win/Scripts/pythonw LEDControllerGUIWindows.py`, or voice control with
 `.venv_win/Scripts/python LEDVoiceControl.py`. Voice control prefers the
 DualSense mic and falls back to the TONOR USB mic.
+
+### Wake-on-LAN from a full shutdown
+
+Tested working on the PC (MSI B550M PRO-VDH WIFI, onboard Realtek Ethernet)
+with:
+
+- Windows Fast Startup **off** (Power Options, or `powercfg /h off` as admin).
+  With it on, "Shut down" is a partial hibernate and the wake packet is
+  ignored.
+- BIOS → Settings → Advanced → Power Management Setup → **ErP Ready: Disabled**
+- BIOS → Settings → Advanced → Wake Up Event Setup → **Resume By PCI-E Device:
+  Enabled**
+- Network adapter properties: **Wake on Magic Packet** and **Shutdown
+  Wake-On-Lan** enabled (the defaults).
 
 ## Troubleshooting
 
