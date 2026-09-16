@@ -74,7 +74,13 @@ async def bluetoothIsOn() -> bool:
 # find_device_by_address() returns as soon as it spots the target, instead of
 # discover()'s fixed-length scan of everything nearby, so this is much faster
 # in the common case where the strip is already advertising.
-async def resolve_device(address: str, timeout: float = 10.0,
+# A scan returns as soon as it sees the device, usually well under a second,
+# so this only bounds the miss case -- and a miss is retried with a fresh scan
+# anyway. Keeping it short turns a stalled command into a quick retry.
+SCAN_TIMEOUT = 4.0
+
+
+async def resolve_device(address: str, timeout: float = SCAN_TIMEOUT,
                          should_abort=_never_abort):
     print(f"Scanning for {address}...")
     # Polled rather than a plain await so a newer command can interrupt the
