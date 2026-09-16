@@ -6,6 +6,7 @@
 import LEDControllerWindows as led
 
 import asyncio
+import contextlib
 import json
 import os
 import queue
@@ -75,10 +76,22 @@ TARGETS = {"bed": "led1", "wall": "led2"}
 # Mentioning one of these makes the command about the PC rather than the lights.
 PC_WORDS = ["computer", "pc"]
 PC_ON_WORDS = ["on", "wake", "start"]
-# Shutting down needs every one of these words. A false match here closes
+# Shutting down needs both of these plus a PC word. A false match here closes
 # everything on the PC, so it's deliberately stricter than turning it on --
 # "turn off my computer" or a passing mention of the computer isn't enough.
-PC_SHUTDOWN_WORDS = ["shut", "down", "computer"]
+PC_SHUTDOWN_WORDS = ["shut", "down"]
+
+# While the PC counts down to shutting down, the bed lights flash red for
+# FLASH_SECONDS at each of these points (seconds after the request) and then go
+# back to what they were showing. It's the warning you'll notice mid-game,
+# where Windows' own notification is hidden.
+SHUTDOWN_FLASHES_AT = (0, 15)
+FLASH_SECONDS = 2.0
+
+# What Navi last set each strip to, so a flash can put it back. Only Navi's own
+# commands are tracked; changes from the phone app aren't seen.
+STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "navi_state.json")
+DEFAULT_STRIP_STATE = {"power": "on", "rgb": [255, 255, 255]}
 
 # Phrases that map straight to a scene, addressing both strips. Kept to
 # multi-word phrases: a lone "bye" got inserted by the recognizer into a
@@ -104,7 +117,7 @@ FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light", "lights
            "my", "up", "down"]
 
 GRAMMAR = (
-    [WAKE_WORD, "on", "off"]
+    [WAKE_WORD, "on", "off", "cancel"]
     + FILLERS
     + PC_WORDS
     + ["wake", "start", "shut"]
@@ -144,21 +157,26 @@ def after_wake_word(text):
 def parse(text):
     """Map a command (the words after the wake word) to an action, or None.
 
-    Light commands are (power, rgb, target); PC commands are ("pc", "on"|"off").
+    Returns ("lights", power, rgb, target), ("pc_on",), ("shutdown",) or
+    ("cancel",).
     """
     global last_color
 
     words = text.split()
 
+    # Checked first: when in doubt, cancelling is the safe reading.
+    if "cancel" in words:
+        return ("cancel",)
+
     if any(w in words for w in PC_WORDS):
         if all(w in words for w in PC_SHUTDOWN_WORDS):
-            return "pc", "off"
+            return ("shutdown",)
         if "shut" in words or "off" in words:
             # Sounds like a shutdown but doesn't meet the bar above; don't fall
             # through and treat it as "on".
             return None
         if any(w in words for w in PC_ON_WORDS):
-            return "pc", "on"
+            return ("pc_on",)
         return None
 
     target = "both"
@@ -182,27 +200,155 @@ def parse(text):
     # likelier to be a misrecognition than a colour someone actually said.
     if color is not None:
         last_color = color
-        return "on", color, target
+        return "lights", "on", color, target
 
     padded = f" {text} "
     for phrase, (power, rgb) in PHRASES.items():
         if f" {phrase} " in padded:
             if power == "on":
                 last_color = rgb
-            return power, rgb, "both"
+            return "lights", power, rgb, "both"
 
     if "off" in words:
-        return "off", (0, 0, 0), target
+        return "lights", "off", (0, 0, 0), target
 
     if "on" in words:
-        return "on", last_color, target
+        return "lights", "on", last_color, target
 
     return None
 
 
-def request_pc_shutdown():
-    ok, message = PCControl.shutdown_pc()
-    print(f"  PC shutdown: {message}" if ok else f"  PC shutdown FAILED: {message}")
+def load_strip_states():
+    try:
+        with open(STATE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+strip_states = load_strip_states()
+
+
+def strip_state(strip):
+    state = strip_states.get(strip, DEFAULT_STRIP_STATE)
+    return state["power"], tuple(state["rgb"])
+
+
+def remember_strip_state(target, power, rgb):
+    for strip in (("led1", "led2") if target == "both" else (target,)):
+        strip_states[strip] = {"power": power, "rgb": list(rgb)}
+    tmp = STATE_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(strip_states, f)
+        os.replace(tmp, STATE_PATH)
+    except OSError as e:
+        print(f"  couldn't save light state: {e}")
+
+
+class BleGate:
+    """One Bluetooth operation at a time, spaced COMMAND_COOLDOWN apart."""
+
+    class Slot:
+        cooldown = True
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._ready_at = 0.0
+
+    @contextlib.asynccontextmanager
+    async def use(self):
+        async with self._lock:
+            wait = self._ready_at - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            slot = BleGate.Slot()
+            try:
+                yield slot
+            finally:
+                self._ready_at = time.monotonic() + (COMMAND_COOLDOWN if slot.cooldown else 0)
+
+
+def qhm_state_commands(power, rgb):
+    if power == "on":
+        return [(led.qhm_color(*rgb), 0.2), (led.qhm_on(), 0.2), (led.qhm_color(*rgb), 0.3)]
+    return [(led.qhm_off(), 0.3)]
+
+
+async def flash_bed_lights(ble):
+    """Bed lights red for FLASH_SECONDS, then back to their last known state."""
+    power, rgb = strip_state("led1")
+    red = led.qhm_color(255, 0, 0)
+    hold_writes = 4
+    commands = [(red, 0.1), (led.qhm_on(), 0.1)]
+    # Keep writing while it's red rather than sleeping: these strips drop an
+    # idle link quickly, and losing it here would leave the lights stuck red.
+    commands += [(red, (FLASH_SECONDS - 0.2) / hold_writes)] * hold_writes
+    commands += qhm_state_commands(power, rgb)
+
+    async with ble.use():
+        try:
+            await led.send_with_retries("LED 1 flash", led.ADDRESS, led.CHAR_UUID, commands)
+            return
+        except Exception as e:
+            print(f"  flash failed ({e}); restoring bed lights")
+        try:
+            await led.send_with_retries("LED 1 restore", led.ADDRESS, led.CHAR_UUID,
+                                        qhm_state_commands(power, rgb))
+        except Exception as e:
+            print(f"  couldn't restore bed lights: {e}")
+
+
+class ShutdownCountdown:
+    """Runs the PC shutdown request and its warning flashes; supports cancel."""
+
+    def __init__(self, ble):
+        self.ble = ble
+        self.task = None
+        self.cancelled = asyncio.Event()
+
+    def start(self):
+        if self.task and not self.task.done():
+            print("  shutdown already counting down")
+            return
+        self.cancelled = asyncio.Event()
+        self.task = asyncio.create_task(self._run(self.cancelled))
+
+    def cancel(self):
+        # Setting the event stops future flashes. A flash already running is
+        # left to finish: interrupting a BLE session midway is what used to
+        # wedge the strips, and the flash restores the lights on its own.
+        self.cancelled.set()
+        asyncio.create_task(self._send_cancel())
+
+    async def _send_cancel(self):
+        ok, message = await asyncio.to_thread(PCControl.cancel_pc_shutdown)
+        print(f"  cancel: {message}" if ok else f"  cancel FAILED: {message}")
+
+    async def _run(self, cancelled):
+        started = time.monotonic()
+        ok, message = await asyncio.to_thread(PCControl.shutdown_pc)
+        if not ok:
+            print(f"  PC shutdown FAILED: {message}")
+            return
+        print(f"  PC shutdown: {message}")
+        if cancelled.is_set():
+            # "cancel" arrived while the request was still in flight, so its own
+            # abort may have run before there was anything to abort.
+            await self._send_cancel()
+            return
+
+        for at in SHUTDOWN_FLASHES_AT:
+            wait = at - (time.monotonic() - started)
+            if wait > 0:
+                try:
+                    await asyncio.wait_for(cancelled.wait(), wait)
+                    return
+                except asyncio.TimeoutError:
+                    pass
+            if cancelled.is_set():
+                return
+            await flash_bed_lights(self.ble)
 
 
 def listen_loop(commands):
@@ -295,62 +441,72 @@ def _listen(commands):
                 print(f"  (not a command: {text!r})")
                 continue
 
-            if command[0] == "pc":
-                # Handled right here rather than queued: it's a single UDP send,
-                # and queueing would let a quick follow-up light command
-                # supersede and silently drop it.
-                if command[1] == "on":
-                    PCControl.wake_pc()
-                    print(f"heard: {text!r} -> sent wake packet to the PC")
-                else:
-                    print(f"heard: {text!r} -> asking the PC to shut down")
-                    # SSH takes a few seconds; don't stop listening meanwhile.
-                    threading.Thread(target=request_pc_shutdown, daemon=True).start()
+            if command[0] == "pc_on":
+                # Handled right here: it's a single UDP send, no Bluetooth.
+                PCControl.wake_pc()
+                print(f"heard: {text!r} -> sent wake packet to the PC")
                 continue
 
-            print(f"heard: {text!r} -> {command[0]} rgb={command[1]} target={command[2]}")
+            if command[0] == "lights":
+                _, power, rgb, target = command
+                print(f"heard: {text!r} -> {power} rgb={rgb} target={target}")
+            else:
+                print(f"heard: {text!r} -> {command[0]}")
             commands.put(command)
 
 
-async def command_loop(commands):
-    """Drives the strips on the main thread, newest command wins."""
-    while True:
+async def run_light_command(command, ble, should_abort):
+    _, power, (r, g, b), target = command
+    async with ble.use() as slot:
         try:
-            command = commands.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0.05)
-            continue
-
-        # A BLE round trip takes several seconds, so anything spoken meanwhile
-        # is already stale. Keep only the newest instruction.
-        superseded = 0
-        while True:
-            try:
-                command = commands.get_nowait()
-                superseded += 1
-            except queue.Empty:
-                break
-        if superseded:
-            print(f"  (skipping {superseded} superseded command(s))")
-
-        power, (r, g, b), target = command
-
-        try:
-            # A queued command means something newer was said, so stop the
-            # one in flight rather than making the user wait it out.
-            await led.apply_from_gui(
-                power, r, g, b, target,
-                should_abort=lambda: not commands.empty(),
-            )
+            await led.apply_from_gui(power, r, g, b, target, should_abort=should_abort)
         except led.Aborted:
             print("  interrupted by a newer command")
             # The interrupted command already disconnected cleanly, so go
             # straight to the new one instead of sitting out the cooldown.
-            continue
+            slot.cooldown = False
+            return
         except Exception as e:
             print(f"  LED command failed: {e}")
+            return
+    remember_strip_state(target, power, (r, g, b))
 
-        await asyncio.sleep(COMMAND_COOLDOWN)
+
+async def command_loop(commands):
+    """Runs everything that touches Bluetooth, on the main thread.
+
+    Light commands: newest wins, and a newer one interrupts the one in flight.
+    Shutdown and cancel are never dropped or interrupted by light commands.
+    """
+    ble = BleGate()
+    shutdown = ShutdownCountdown(ble)
+    pending = {"light": None}
+    light_task = None
+
+    while True:
+        while True:
+            try:
+                command = commands.get_nowait()
+            except queue.Empty:
+                break
+            if command[0] == "shutdown":
+                shutdown.start()
+            elif command[0] == "cancel":
+                shutdown.cancel()
+            else:
+                if pending["light"] is not None:
+                    print("  (skipping a superseded light command)")
+                pending["light"] = command
+
+        if pending["light"] is not None and (light_task is None or light_task.done()):
+            command, pending["light"] = pending["light"], None
+            light_task = asyncio.create_task(run_light_command(
+                command, ble,
+                # A newer light command waiting means this one is stale.
+                should_abort=lambda: pending["light"] is not None,
+            ))
+
+        await asyncio.sleep(0.05)
 
 
 def main():

@@ -7,11 +7,14 @@ import subprocess
 # the BIOS "ErP Ready" disabled and "Resume By PCI-E Device" enabled.
 PC_MAC = "04:7C:16:17:C9:A3"
 
-# Shutdown goes over SSH with a key the PC only accepts for one forced command
-# (a 30-second shutdown), so this can't do anything else on the PC.
+# Shutdown and cancel go over SSH, each with its own key that the PC only
+# accepts for one forced command ("shutdown /s /t 30 ..." and "shutdown /a"),
+# so neither key can do anything else on the PC.
 PC_USER = "jerem"
 PC_LAST_KNOWN_IP = "192.168.50.181"
 SHUTDOWN_KEY = os.path.expanduser("~/.ssh/pc_shutdown")
+CANCEL_KEY = os.path.expanduser("~/.ssh/pc_cancel")
+SHUTDOWN_DELAY = 30
 # The PC's host key is pinned under this name rather than its IP, so a new
 # DHCP address doesn't trip host key checking.
 PC_HOST_ALIAS = "jerrys-pc"
@@ -45,13 +48,13 @@ def find_pc_ip() -> str:
     return PC_LAST_KNOWN_IP
 
 
-def shutdown_pc() -> tuple[bool, str]:
-    """Ask the PC to shut down. Returns (ok, message). Blocks for a few seconds."""
+def _run_forced_command(key: str) -> tuple[subprocess.CompletedProcess | None, str]:
+    """SSH to the PC with a restricted key; the PC decides what actually runs."""
     host = find_pc_ip()
     try:
         result = subprocess.run(
             [
-                "ssh", "-i", SHUTDOWN_KEY,
+                "ssh", "-i", key,
                 "-o", "BatchMode=yes",
                 "-o", "IdentitiesOnly=yes",
                 "-o", "ConnectTimeout=5",
@@ -61,7 +64,29 @@ def shutdown_pc() -> tuple[bool, str]:
             capture_output=True, text=True, timeout=20,
         )
     except (OSError, subprocess.SubprocessError) as e:
-        return False, f"ssh to {host} failed: {e}"
+        return None, f"ssh to {host} failed: {e}"
+    return result, host
+
+
+def shutdown_pc() -> tuple[bool, str]:
+    """Start the PC's 30-second shutdown. Returns (ok, message). Blocks briefly."""
+    result, host = _run_forced_command(SHUTDOWN_KEY)
+    if result is None:
+        return False, host
     if result.returncode != 0:
-        return False, f"ssh to {host} exited {result.returncode}: {result.stderr.strip()}"
+        return False, f"ssh to {host} exited {result.returncode}: {(result.stderr or result.stdout).strip()}"
     return True, f"shutdown requested on {host}"
+
+
+def cancel_pc_shutdown() -> tuple[bool, str]:
+    """Cancel a pending shutdown on the PC. Returns (ok, message)."""
+    result, host = _run_forced_command(CANCEL_KEY)
+    if result is None:
+        return False, host
+    output = (result.stdout + result.stderr).strip()
+    if result.returncode == 0:
+        return True, f"shutdown cancelled on {host}"
+    # Windows error 1116: there was no shutdown to abort.
+    if "(1116)" in output:
+        return True, "no shutdown was pending"
+    return False, f"ssh to {host} exited {result.returncode}: {output}"

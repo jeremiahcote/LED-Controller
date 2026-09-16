@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 LEDStartupWindows.log
 models/
+navi_state.json
+navi_state.json.tmp
