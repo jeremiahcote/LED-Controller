@@ -1,3 +1,10 @@
+# Imported first, on purpose. Its first lines put the process in the COM
+# apartment bleak's WinRT backend needs, and that has to happen before
+# anything else initializes COM -- sounddevice does, for audio device
+# enumeration. With the imports the other way round LED 2 dropped the link
+# mid-write on essentially every command.
+import LEDControllerWindows as led
+
 import asyncio
 import json
 import os
@@ -6,10 +13,15 @@ import sys
 import threading
 import time
 
-import sounddevice as sd
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
-import LEDControllerWindows as led
+# NOTE: sounddevice is deliberately *not* imported here. Importing it
+# initializes COM as STA on whichever thread does the import, and bleak's
+# WinRT backend requires MTA on the thread running BLE. Importing it at module
+# level left the main thread as MAIN_STA, so bleak refused to work there
+# ("Thread is configured for Windows GUI but callbacks are not working") and
+# was unreliable from a worker thread. It's imported inside listen_loop so
+# PortAudio's COM init lands on that thread instead.
 
 SetLogLevel(-1)
 
@@ -39,10 +51,19 @@ COLORS = {
     "white": (255, 255, 255),
 }
 
+# Checked before the single words, so "light blue" doesn't match plain "blue".
+COMPOUND_COLORS = {
+    "light blue": (0, 255, 255),
+    "sky blue": (0, 255, 255),
+}
+
+# Which strip a phrase refers to. Anything else addresses both.
+TARGETS = {"bed": "led1", "wall": "led2"}
+
 # Restricting the recognizer to these phrases massively improves accuracy on a
 # small model. "[unk]" is what lets everything else fall through as unmatched
 # instead of being forced onto the nearest command.
-# Phrases that map straight to a scene instead of following "lights <x>".
+# Phrases that map straight to a scene, addressing both strips.
 PHRASES = {
     "i'm home": ("on", COLORS["cyan"]),
     "good morning": ("on", COLORS["cyan"]),
@@ -50,9 +71,19 @@ PHRASES = {
     "bye": ("off", (0, 0, 0)),
 }
 
+# A grammar of individual words rather than whole phrases, so any wording
+# built from them is recognized and commands can be picked out by keyword --
+# "bed lights red" and "turn the bed lights on red" both work. FILLERS aren't
+# acted on, they just need to be recognizable so they don't force the
+# recognizer to mangle the words around them.
+FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light"]
+
 GRAMMAR = (
-    ["lights on", "lights off"]
-    + [f"lights {name}" for name in COLORS]
+    ["lights", "on", "off"]
+    + FILLERS
+    + list(TARGETS)
+    + list(COLORS)
+    + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
     + list(PHRASES)
     + ["[unk]"]
 )
@@ -60,7 +91,7 @@ GRAMMAR = (
 last_color = (255, 255, 255)
 
 
-def find_input_device(hint):
+def find_input_device(sd, hint):
     if hint:
         for index, device in enumerate(sd.query_devices()):
             if device["max_input_channels"] > 0 and hint.lower() in device["name"].lower():
@@ -70,66 +101,62 @@ def find_input_device(hint):
 
 
 def parse(text):
-    """Map a recognized phrase to (power, rgb), or None."""
+    """Map recognized speech to (power, rgb, target), or None."""
     global last_color
 
     if text in PHRASES:
         power, rgb = PHRASES[text]
         if power == "on":
             last_color = rgb
-        return power, rgb
+        return power, rgb, "both"
 
-    if not text.startswith("lights "):
+    words = text.split()
+
+    # Require an explicit mention of the lights. Without it, this loose a
+    # grammar would fire on ordinary conversation containing "on" or "red".
+    if "lights" not in words:
         return None
-    word = text[len("lights "):].strip()
 
-    if word == "off":
-        return "off", (0, 0, 0)
+    target = "both"
+    for word, name in TARGETS.items():
+        if word in words:
+            target = name
+            break
 
-    if word == "on":
-        return "on", last_color
+    color = None
+    for phrase, rgb in COMPOUND_COLORS.items():
+        if phrase in text:
+            color = rgb
+            break
+    if color is None:
+        for name, rgb in COLORS.items():
+            if name in words:
+                color = rgb
+                break
 
-    if word in COLORS:
-        last_color = COLORS[word]
-        return "on", last_color
+    if color is not None:
+        last_color = color
+        return "on", color, target
+
+    if "off" in words:
+        return "off", (0, 0, 0), target
+
+    if "on" in words:
+        return "on", last_color, target
 
     return None
 
 
-def led_worker(commands):
-    """Runs BLE commands off the audio thread so listening never stalls."""
-    while True:
-        command = commands.get()
-        if command is None:
-            return
+def listen_loop(commands):
+    """Capture audio and recognize speech, queueing commands for the main thread.
 
-        # A BLE round trip takes several seconds, so anything spoken meanwhile
-        # is already stale. Keep only the newest instruction.
-        superseded = 0
-        while True:
-            try:
-                command = commands.get_nowait()
-                superseded += 1
-            except queue.Empty:
-                break
-        if superseded:
-            print(f"  (skipping {superseded} superseded command(s))")
+    Listening runs here rather than the BLE work because of the COM apartment
+    constraint described at the imports: sounddevice has to initialize COM on
+    some thread, and it must not be the one bleak uses.
+    """
+    import sounddevice as sd
 
-        power, (r, g, b) = command
-
-        try:
-            asyncio.run(led.apply_from_gui(power, r, g, b))
-        except Exception as e:
-            print(f"  LED command failed: {e}")
-
-        time.sleep(COMMAND_COOLDOWN)
-
-
-def main():
-    if not os.path.isdir(MODEL_PATH):
-        sys.exit(f"Vosk model not found at {MODEL_PATH}")
-
-    device_index, device_name = find_input_device(MIC_NAME_HINT)
+    device_index, device_name = find_input_device(sd, MIC_NAME_HINT)
     print(f"Microphone: {device_name}")
 
     samplerate = 16000
@@ -141,15 +168,10 @@ def main():
 
     recognizer = KaldiRecognizer(Model(MODEL_PATH), samplerate, json.dumps(GRAMMAR))
 
-    commands = queue.Queue()
-    threading.Thread(target=led_worker, args=(commands,), daemon=True).start()
-
     audio = queue.Queue()
 
     def callback(indata, frames, time_info, status):
         audio.put(bytes(indata))
-
-    print("Listening. Say e.g. 'lights on', 'lights cyan', 'lights off'. Ctrl+C to stop.")
 
     with sd.RawInputStream(
         samplerate=samplerate,
@@ -181,8 +203,61 @@ def main():
                 print(f"  (ignored: {text!r})")
                 continue
 
-            print(f"heard: {text!r} -> {command[0]} rgb={command[1]}")
+            print(f"heard: {text!r} -> {command[0]} rgb={command[1]} target={command[2]}")
             commands.put(command)
+
+
+async def command_loop(commands):
+    """Drives the strips on the main thread, newest command wins."""
+    while True:
+        try:
+            command = commands.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0.05)
+            continue
+
+        # A BLE round trip takes several seconds, so anything spoken meanwhile
+        # is already stale. Keep only the newest instruction.
+        superseded = 0
+        while True:
+            try:
+                command = commands.get_nowait()
+                superseded += 1
+            except queue.Empty:
+                break
+        if superseded:
+            print(f"  (skipping {superseded} superseded command(s))")
+
+        power, (r, g, b), target = command
+
+        try:
+            # A queued command means something newer was said, so stop the
+            # one in flight rather than making the user wait it out.
+            await led.apply_from_gui(
+                power, r, g, b, target,
+                should_abort=lambda: not commands.empty(),
+            )
+        except led.Aborted:
+            print("  interrupted by a newer command")
+            # The interrupted command already disconnected cleanly, so go
+            # straight to the new one instead of sitting out the cooldown.
+            continue
+        except Exception as e:
+            print(f"  LED command failed: {e}")
+
+        await asyncio.sleep(COMMAND_COOLDOWN)
+
+
+def main():
+    if not os.path.isdir(MODEL_PATH):
+        sys.exit(f"Vosk model not found at {MODEL_PATH}")
+
+    commands = queue.Queue()
+    threading.Thread(target=listen_loop, args=(commands,), daemon=True).start()
+
+    print("Listening. Say e.g. 'lights on', 'lights cyan', 'lights off'. Ctrl+C to stop.")
+
+    asyncio.run(command_loop(commands))
 
 
 if __name__ == "__main__":

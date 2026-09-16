@@ -25,6 +25,14 @@ ADDRESS2 = "BE:69:ED:24:E6:06"  # LED 2 MAC (MELK / LotusLight X)
 CHAR_UUID = "0000ffd9-0000-1000-8000-00805f9b34fb"       # LED 1 characteristic
 MELK_CHAR_UUID = "0000fff3-0000-1000-8000-00805f9b34fb"  # LED 2 characteristic
 
+class Aborted(Exception):
+    """Raised when a newer command supersedes the one in flight."""
+
+
+def _never_abort():
+    return False
+
+
 RETRIES = 3
 # Failures are dropped links mid-sequence, not refused connections -- a retry
 # usually reconnects immediately, so a long backoff just adds dead time.
@@ -66,9 +74,26 @@ async def bluetoothIsOn() -> bool:
 # find_device_by_address() returns as soon as it spots the target, instead of
 # discover()'s fixed-length scan of everything nearby, so this is much faster
 # in the common case where the strip is already advertising.
-async def resolve_device(address: str, timeout: float = 10.0):
+async def resolve_device(address: str, timeout: float = 10.0,
+                         should_abort=_never_abort):
     print(f"Scanning for {address}...")
-    device = await BleakScanner.find_device_by_address(address, timeout=timeout)
+    # Polled rather than a plain await so a newer command can interrupt the
+    # scan -- it's the longest phase, and cancelling it is safe because no
+    # connection is open yet.
+    scan = asyncio.ensure_future(
+        BleakScanner.find_device_by_address(address, timeout=timeout)
+    )
+    while not scan.done():
+        if should_abort():
+            scan.cancel()
+            try:
+                await scan
+            except BaseException:
+                pass
+            raise Aborted()
+        await asyncio.sleep(0.1)
+
+    device = scan.result()
     if device is None:
         return None
     print(f"  found {address}")
@@ -129,7 +154,8 @@ def melk_color(r, g, b):
     return bytearray([0x7E, 0x00, 0x05, 0x03, r, g, b, 0x00, 0xEF])
 
 
-async def send_commands(label, address, char_uuid, commands):
+async def send_commands(label, address, char_uuid, commands,
+                        should_abort=_never_abort):
     """Connect, write each command, then always disconnect.
 
     The disconnect is the part that matters for reliability: if it's skipped,
@@ -138,9 +164,12 @@ async def send_commands(label, address, char_uuid, commands):
     asyncio.wait_for -- a timeout there cancels the coroutine mid-flight and
     can abort the disconnect, wedging the device.
     """
-    device = await resolve_device(address)
+    device = await resolve_device(address, should_abort=should_abort)
     if device is None:
         raise RuntimeError(f"{label} ({address}) not found in scan.")
+
+    if should_abort():
+        raise Aborted()
 
     client = BleakClient(device, timeout=15.0)
     try:
@@ -154,6 +183,12 @@ async def send_commands(label, address, char_uuid, commands):
         # from the macOS path, which is reliable in practice -- these strips
         # are timing sensitive and shortening the gaps loses writes silently.
         for index, (command, delay) in enumerate(commands):
+            # Give up at a write boundary rather than mid-operation. The
+            # finally below still runs a clean disconnect, which is what keeps
+            # an interrupted command from leaving the strip wedged.
+            if should_abort():
+                raise Aborted()
+
             # Writes are unacknowledged. Both characteristics advertise the
             # "write" property too, but LED 2's firmware doesn't honour it --
             # acknowledged writes drop its success rate from 6/6 to 2/8.
@@ -179,13 +214,20 @@ async def send_commands(label, address, char_uuid, commands):
         await asyncio.sleep(DISCONNECT_SETTLE)
 
 
-async def send_with_retries(label, address, char_uuid, commands):
+async def send_with_retries(label, address, char_uuid, commands,
+                            should_abort=_never_abort):
     for attempt in range(1, RETRIES + 1):
+        if should_abort():
+            raise Aborted()
         try:
             print(f"{label}: attempt {attempt}")
-            await send_commands(label, address, char_uuid, commands)
+            await send_commands(label, address, char_uuid, commands,
+                                should_abort=should_abort)
             print(f"{label}: finished")
             return
+        except Aborted:
+            # Superseded, so there's nothing worth retrying.
+            raise
         except Exception as e:
             print(f"{label} error on attempt {attempt}: {e}")
             if attempt == RETRIES:
@@ -238,7 +280,13 @@ def onOrOffIO():
    return onOrOff, r, g, b
 
 
-async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
+async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, target: str = "both",
+                         should_abort=_never_abort):
+    """target: "both", "led1" (bed lights) or "led2" (wall lights).
+
+    should_abort is polled at safe points; when it returns True the command
+    stops early and raises Aborted.
+    """
     onOrOff = onOrOff.lower().strip()
 
     # Clamp values
@@ -246,7 +294,7 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
     g = max(0, min(255, int(g)))
     b = max(0, min(255, int(b)))
 
-    print(f"request: power={onOrOff}, RGB=({r}, {g}, {b})")
+    print(f"request: power={onOrOff}, RGB=({r}, {g}, {b}), target={target}")
 
     if onOrOff == "off":
         led1_commands = [(qhm_off(), 0.2)]
@@ -273,13 +321,18 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
     # the link as up while its writes quietly go nowhere. That failure is
     # invisible to the code -- nothing raises -- so it only shows up as the
     # light not actually changing.
+    strips = []
+    if target in ("both", "led1"):
+        strips.append(("LED 1", ADDRESS, CHAR_UUID, led1_commands))
+    if target in ("both", "led2"):
+        strips.append(("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands))
+
     results = []
-    for args in (
-        ("LED 1", ADDRESS, CHAR_UUID, led1_commands),
-        ("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands),
-    ):
+    for args in strips:
         try:
-            await send_with_retries(*args)
+            await send_with_retries(*args, should_abort=should_abort)
+        except Aborted:
+            raise
         except Exception as e:
             # Don't let one strip failing stop the other from responding.
             print(f"  {e}")
