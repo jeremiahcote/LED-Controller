@@ -12,6 +12,7 @@ except Exception:
 
 
 import asyncio
+import datetime
 from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakBluetoothNotAvailableError
 import requests
@@ -25,6 +26,8 @@ CHAR_UUID = "0000ffd9-0000-1000-8000-00805f9b34fb"       # LED 1 characteristic
 MELK_CHAR_UUID = "0000fff3-0000-1000-8000-00805f9b34fb"  # LED 2 characteristic
 
 RETRIES = 3
+# Failures are dropped links mid-sequence, not refused connections -- a retry
+# usually reconnects immediately, so a long backoff just adds dead time.
 RETRY_BACKOFF = 2.0
 FULL_BRIGHTNESS = 100
 
@@ -32,7 +35,7 @@ FULL_BRIGHTNESS = 100
 # has to go out the moment connect() returns -- adding a settle delay there
 # measurably doubled the failure rate. A pause after disconnecting is fine, and
 # gives Windows time to release the handle before the next connect.
-DISCONNECT_SETTLE = 1.0
+DISCONNECT_SETTLE = 0.5
 
 
 # check if user is home
@@ -89,6 +92,27 @@ def qhm_color(r, g, b):
 # than through btledstrip, whose context manager sleeps a full second after
 # each of three clock-sync commands on every connect -- 3s of latency per
 # command for a handshake that has nothing to do with controlling the light.
+def melk_init():
+    """Handshake btledstrip sends on every connect, before any command.
+
+    Easy to mistake for pointless clock-sync chatter, but the strip appears to
+    need it: without it a reconnect accepts writes and reports success while
+    ignoring them, which is what made LED 2 look like it worked when it hadn't.
+    """
+    now = datetime.datetime.now()
+    _, _, day_of_week = datetime.date.today().isocalendar()
+    # btledstrip waits a full second after each of these. That's far longer
+    # than needed and actively harmful here: drops happen *during* the write
+    # sequence, so the longer the sequence, the more chances there are to lose
+    # the link. Keep the commands, lose the waiting.
+    return [
+        (bytearray([0x7E, 0x07, 0x83]), 0.1),
+        (bytearray([0x7E, 0x04, 0x04]), 0.1),
+        (bytearray([0x7E, 0x00, 0x83, now.hour, now.minute, now.second,
+                    day_of_week, 0x00, 0xEF]), 0.1),
+    ]
+
+
 def melk_on():
     return bytearray([0x7E, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0xEF])
 
@@ -105,7 +129,7 @@ def melk_color(r, g, b):
     return bytearray([0x7E, 0x00, 0x05, 0x03, r, g, b, 0x00, 0xEF])
 
 
-async def send_commands(label, address, char_uuid, commands, gap=0.2):
+async def send_commands(label, address, char_uuid, commands):
     """Connect, write each command, then always disconnect.
 
     The disconnect is the part that matters for reliability: if it's skipped,
@@ -119,14 +143,27 @@ async def send_commands(label, address, char_uuid, commands, gap=0.2):
         raise RuntimeError(f"{label} ({address}) not found in scan.")
 
     client = BleakClient(device, timeout=15.0)
-    await client.connect()
     try:
-        for command in commands:
+        await client.connect()
+    except Exception as e:
+        raise RuntimeError(f"connect failed: {e}")
+    print(f"  {label}: connected")
+
+    try:
+        # Each command carries its own trailing delay. The values are taken
+        # from the macOS path, which is reliable in practice -- these strips
+        # are timing sensitive and shortening the gaps loses writes silently.
+        for index, (command, delay) in enumerate(commands):
             # Writes are unacknowledged. Both characteristics advertise the
             # "write" property too, but LED 2's firmware doesn't honour it --
             # acknowledged writes drop its success rate from 6/6 to 2/8.
-            await client.write_gatt_char(char_uuid, command, response=False)
-            await asyncio.sleep(gap)
+            try:
+                await client.write_gatt_char(char_uuid, command, response=False)
+            except Exception as e:
+                raise RuntimeError(
+                    f"write {index + 1}/{len(commands)} failed: {e}"
+                )
+            await asyncio.sleep(delay)
 
         # Unacknowledged writes report success even if the link died and the
         # commands went nowhere, which looks like a command that "finished"
@@ -142,11 +179,11 @@ async def send_commands(label, address, char_uuid, commands, gap=0.2):
         await asyncio.sleep(DISCONNECT_SETTLE)
 
 
-async def send_with_retries(label, address, char_uuid, commands, gap=0.2):
+async def send_with_retries(label, address, char_uuid, commands):
     for attempt in range(1, RETRIES + 1):
         try:
             print(f"{label}: attempt {attempt}")
-            await send_commands(label, address, char_uuid, commands, gap)
+            await send_commands(label, address, char_uuid, commands)
             print(f"{label}: finished")
             return
         except Exception as e:
@@ -212,23 +249,41 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
     print(f"request: power={onOrOff}, RGB=({r}, {g}, {b})")
 
     if onOrOff == "off":
-        led1_commands = [qhm_off()]
-        led2_commands = [melk_off()]
+        led1_commands = [(qhm_off(), 0.2)]
+        # Trailing delay lets the last write flush before the disconnect.
+        led2_commands = melk_init() + [(melk_off(), 0.6)]
     else:
         # Colour first, then power on, then colour again -- the strip ignores
         # colour writes made while it's still powered off.
-        led1_commands = [qhm_color(r, g, b), qhm_on(), qhm_color(r, g, b)]
-        led2_commands = [melk_on(), melk_brightness(FULL_BRIGHTNESS), melk_color(r, g, b)]
+        led1_commands = [
+            (qhm_color(r, g, b), 0.2), (qhm_on(), 0.2), (qhm_color(r, g, b), 0.2)
+        ]
+        # The strip has to be on before brightness and colour will stick, and
+        # the long trailing delay lets the last write flush -- disconnecting
+        # straight after it can discard an unacknowledged write.
+        led2_commands = melk_init() + [
+            (melk_on(), 0.2),
+            (melk_brightness(FULL_BRIGHTNESS), 0.15),
+            (melk_color(r, g, b), 0.6),
+        ]
 
-    # Drive both strips at once. They're independent connections, and running
-    # them in series made every command wait out the slower strip -- roughly
-    # doubling latency for no benefit. return_exceptions keeps one strip being
-    # unreachable from stopping the other from responding.
-    results = await asyncio.gather(
-        send_with_retries("LED 1", ADDRESS, CHAR_UUID, led1_commands),
-        send_with_retries("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands),
-        return_exceptions=True,
-    )
+    # One strip at a time. Running the two connections concurrently halved the
+    # latency but made LED 2 unreliable in practice: two simultaneous BLE
+    # connections contend for the single adapter, and this controller reports
+    # the link as up while its writes quietly go nowhere. That failure is
+    # invisible to the code -- nothing raises -- so it only shows up as the
+    # light not actually changing.
+    results = []
+    for args in (
+        ("LED 1", ADDRESS, CHAR_UUID, led1_commands),
+        ("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands),
+    ):
+        try:
+            await send_with_retries(*args)
+        except Exception as e:
+            # Don't let one strip failing stop the other from responding.
+            print(f"  {e}")
+            results.append(e)
 
     failures = [r for r in results if isinstance(r, Exception)]
     if failures:

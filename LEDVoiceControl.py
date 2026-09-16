@@ -42,9 +42,18 @@ COLORS = {
 # Restricting the recognizer to these phrases massively improves accuracy on a
 # small model. "[unk]" is what lets everything else fall through as unmatched
 # instead of being forced onto the nearest command.
+# Phrases that map straight to a scene instead of following "lights <x>".
+PHRASES = {
+    "i'm home": ("on", COLORS["cyan"]),
+    "good morning": ("on", COLORS["cyan"]),
+    "good night": ("off", (0, 0, 0)),
+    "bye": ("off", (0, 0, 0)),
+}
+
 GRAMMAR = (
     ["lights on", "lights off"]
     + [f"lights {name}" for name in COLORS]
+    + list(PHRASES)
     + ["[unk]"]
 )
 
@@ -63,6 +72,12 @@ def find_input_device(hint):
 def parse(text):
     """Map a recognized phrase to (power, rgb), or None."""
     global last_color
+
+    if text in PHRASES:
+        power, rgb = PHRASES[text]
+        if power == "on":
+            last_color = rgb
+        return power, rgb
 
     if not text.startswith("lights "):
         return None
