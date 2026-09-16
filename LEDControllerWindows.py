@@ -122,8 +122,18 @@ async def send_commands(label, address, char_uuid, commands, gap=0.2):
     await client.connect()
     try:
         for command in commands:
+            # Writes are unacknowledged. Both characteristics advertise the
+            # "write" property too, but LED 2's firmware doesn't honour it --
+            # acknowledged writes drop its success rate from 6/6 to 2/8.
             await client.write_gatt_char(char_uuid, command, response=False)
             await asyncio.sleep(gap)
+
+        # Unacknowledged writes report success even if the link died and the
+        # commands went nowhere, which looks like a command that "finished"
+        # but never reached the strip. Confirming the link survived turns that
+        # silent loss into a normal failure the retry loop can handle.
+        if not client.is_connected:
+            raise RuntimeError("connection dropped during command sequence")
     finally:
         try:
             await client.disconnect()
