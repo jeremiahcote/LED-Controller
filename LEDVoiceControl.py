@@ -27,9 +27,10 @@ SetLogLevel(-1)
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "vosk-model-small-en-us-0.15")
 
-# Matched as a substring against input device names, so the same config works
-# on Windows and on the Pi's ALSA device list. None falls back to the default.
-MIC_NAME_HINT = "TONOR"
+# Tried in order, each matched as a substring against input device names, so
+# the same config works on Windows and on the Pi's ALSA device list. Falls back
+# to the system default if none are connected.
+MIC_NAME_HINTS = ["DualSense", "TONOR"]
 
 # Vosk often finalizes the same utterance twice; without this each one queues a
 # separate BLE round trip.
@@ -91,9 +92,10 @@ GRAMMAR = (
 last_color = (255, 255, 255)
 
 
-def find_input_device(sd, hint):
-    if hint:
-        for index, device in enumerate(sd.query_devices()):
+def find_input_device(sd, hints):
+    devices = list(enumerate(sd.query_devices()))
+    for hint in hints:
+        for index, device in devices:
             if device["max_input_channels"] > 0 and hint.lower() in device["name"].lower():
                 return index, device["name"]
     default = sd.query_devices(kind="input")
@@ -156,7 +158,7 @@ def listen_loop(commands):
     """
     import sounddevice as sd
 
-    device_index, device_name = find_input_device(sd, MIC_NAME_HINT)
+    device_index, device_name = find_input_device(sd, MIC_NAME_HINTS)
     print(f"Microphone: {device_name}")
 
     samplerate = 16000
