@@ -75,11 +75,11 @@ TARGETS = {"bed": "led1", "wall": "led2"}
 
 # Mentioning one of these makes the command about the PC rather than the lights.
 PC_WORDS = ["computer", "pc"]
-PC_ON_WORDS = ["on", "wake", "start"]
-# Shutting down needs both of these plus a PC word. A false match here closes
-# everything on the PC, so it's deliberately stricter than turning it on --
-# "turn off my computer" or a passing mention of the computer isn't enough.
-PC_SHUTDOWN_WORDS = ["shut", "down"]
+PC_ON_WORDS = ["on", "wake", "start", "boot"]
+# Shutting down needs one of these word pairs plus a PC word ("shut down my
+# computer", "turn my PC off"). A lone "off" or "shut" isn't enough, since a
+# false match closes everything on the PC.
+PC_SHUTDOWN_PAIRS = [("shut", "down"), ("turn", "off")]
 
 # While the PC counts down to shutting down, the bed lights flash red for
 # FLASH_SECONDS at each of these points (seconds after the request) and then go
@@ -120,7 +120,7 @@ GRAMMAR = (
     [WAKE_WORD, "on", "off", "cancel"]
     + FILLERS
     + PC_WORDS
-    + ["wake", "start", "shut"]
+    + ["wake", "start", "boot", "shut"]
     + list(TARGETS)
     + list(COLORS)
     + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
@@ -169,7 +169,7 @@ def parse(text):
         return ("cancel",)
 
     if any(w in words for w in PC_WORDS):
-        if all(w in words for w in PC_SHUTDOWN_WORDS):
+        if any(a in words and b in words for a, b in PC_SHUTDOWN_PAIRS):
             return ("shutdown",)
         if "shut" in words or "off" in words:
             # Sounds like a shutdown but doesn't meet the bar above; don't fall

@@ -33,11 +33,13 @@ seconds after saying "Navi" on its own.
 - "Navi, lights off" / "Navi, wall lights off"
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
-- "Navi, turn on my computer" / "Navi, wake up my PC" → Wake-on-LAN
-- "Navi, shut down my computer" (or "my PC") → PC shuts down after 30 seconds.
-  The bed lights flash red for 2 seconds at the start and again at 15 seconds,
-  then return to what Navi last set them to. Needs "shut" and "down"; "turn off
-  my computer" does nothing.
+- "Navi, turn on / boot up / wake up / start my computer" → Wake-on-LAN
+- "Navi, shut down / turn off my computer" → PC shuts down after 30 seconds.
+  The bed lights flash for 2 seconds at the start and again at 15 seconds (red,
+  or off if they're already red), then return to what Navi last set them to.
+  Needs "shut down" or "turn … off"; a lone "off" does nothing.
+
+"Computer" and "PC" are interchangeable in all PC commands.
 - "Navi, cancel" → cancels a pending PC shutdown and any remaining flash
 
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
