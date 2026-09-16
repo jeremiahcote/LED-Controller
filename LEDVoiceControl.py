@@ -40,6 +40,13 @@ DUPLICATE_WINDOW = 3.0
 # a gap, back-to-back commands make them drop off the air entirely.
 COMMAND_COOLDOWN = 2.0
 
+# Nothing is acted on unless it follows the wake word, either in the same
+# phrase ("navi, wall lights red") or within WAKE_WINDOW seconds of hearing it
+# on its own. "navi" is in the small model's vocabulary and was recognized
+# consistently in testing, with no confusion with "navy" or "nobby".
+WAKE_WORD = "navi"
+WAKE_WINDOW = 6.0
+
 COLORS = {
     "red": (255, 0, 0),
     "green": (0, 255, 0),
@@ -61,9 +68,6 @@ COMPOUND_COLORS = {
 # Which strip a phrase refers to. Anything else addresses both.
 TARGETS = {"bed": "led1", "wall": "led2"}
 
-# Restricting the recognizer to these phrases massively improves accuracy on a
-# small model. "[unk]" is what lets everything else fall through as unmatched
-# instead of being forced onto the nearest command.
 # Phrases that map straight to a scene, addressing both strips.
 PHRASES = {
     "i'm home": ("on", COLORS["cyan"]),
@@ -72,15 +76,18 @@ PHRASES = {
     "bye": ("off", (0, 0, 0)),
 }
 
-# A grammar of individual words rather than whole phrases, so any wording
-# built from them is recognized and commands can be picked out by keyword --
-# "bed lights red" and "turn the bed lights on red" both work. FILLERS aren't
-# acted on, they just need to be recognizable so they don't force the
-# recognizer to mangle the words around them.
-FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light"]
+# Restricting the recognizer to a known vocabulary massively improves accuracy
+# on a small model; "[unk]" lets everything else fall through as unmatched
+# instead of being forced onto the nearest word. It's a list of individual
+# words rather than whole phrases, so any wording built from them is recognized
+# and commands can be picked out by keyword -- "bed lights red" and "turn the
+# bed lights on red" both work. FILLERS aren't acted on, they just need to be
+# recognizable so they don't force the recognizer to mangle the words around
+# them.
+FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light", "lights"]
 
 GRAMMAR = (
-    ["lights", "on", "off"]
+    [WAKE_WORD, "on", "off"]
     + FILLERS
     + list(TARGETS)
     + list(COLORS)
@@ -102,22 +109,31 @@ def find_input_device(sd, hints):
     return None, default["name"]
 
 
+def after_wake_word(text):
+    """Words following the last wake word, or None if it wasn't said.
+
+    The last occurrence is used because the recognizer merges speech without a
+    clear pause into one result ("navi ... navi wall lights red").
+    """
+    words = text.split()
+    if WAKE_WORD not in words:
+        return None
+    last = len(words) - 1 - words[::-1].index(WAKE_WORD)
+    return " ".join(w for w in words[last + 1:] if w != "[unk]")
+
+
 def parse(text):
-    """Map recognized speech to (power, rgb, target), or None."""
+    """Map a command (the words after the wake word) to (power, rgb, target), or None."""
     global last_color
 
-    if text in PHRASES:
-        power, rgb = PHRASES[text]
-        if power == "on":
-            last_color = rgb
-        return power, rgb, "both"
+    padded = f" {text} "
+    for phrase, (power, rgb) in PHRASES.items():
+        if f" {phrase} " in padded:
+            if power == "on":
+                last_color = rgb
+            return power, rgb, "both"
 
     words = text.split()
-
-    # Require an explicit mention of the lights. Without it, this loose a
-    # grammar would fire on ordinary conversation containing "on" or "red".
-    if "lights" not in words:
-        return None
 
     target = "both"
     for word, name in TARGETS.items():
@@ -185,6 +201,7 @@ def listen_loop(commands):
     ):
         last_text = None
         last_text_at = 0.0
+        awake_until = 0.0
 
         while True:
             data = audio.get()
@@ -200,9 +217,23 @@ def listen_loop(commands):
                 continue
             last_text, last_text_at = text, now
 
-            command = parse(text)
+            request = after_wake_word(text)
+            if request is None:
+                if now > awake_until:
+                    print(f"  (no wake word, ignored: {text!r})")
+                    continue
+                # Follow-up to a bare "navi" said moments ago.
+                request = " ".join(w for w in text.split() if w != "[unk]")
+
+            if not request:
+                awake_until = now + WAKE_WINDOW
+                print(f"{WAKE_WORD}: listening...")
+                continue
+
+            awake_until = 0.0
+            command = parse(request)
             if command is None:
-                print(f"  (ignored: {text!r})")
+                print(f"  (not a command: {text!r})")
                 continue
 
             print(f"heard: {text!r} -> {command[0]} rgb={command[1]} target={command[2]}")
@@ -257,7 +288,7 @@ def main():
     commands = queue.Queue()
     threading.Thread(target=listen_loop, args=(commands,), daemon=True).start()
 
-    print("Listening. Say e.g. 'lights on', 'lights cyan', 'lights off'. Ctrl+C to stop.")
+    print(f"Listening. Say e.g. '{WAKE_WORD}, wall lights red' or '{WAKE_WORD}, good night'. Ctrl+C to stop.")
 
     asyncio.run(command_loop(commands))
 
