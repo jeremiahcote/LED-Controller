@@ -54,7 +54,7 @@ def _run_forced_command(key: str) -> tuple[subprocess.CompletedProcess | None, s
     try:
         result = subprocess.run(
             [
-                "ssh", "-i", key,
+                "ssh", "-T", "-i", key,
                 "-o", "BatchMode=yes",
                 "-o", "IdentitiesOnly=yes",
                 "-o", "ConnectTimeout=5",
