@@ -75,7 +75,10 @@ TARGETS = {"bed": "led1", "wall": "led2"}
 # Mentioning one of these makes the command about the PC rather than the lights.
 PC_WORDS = ["computer", "pc"]
 PC_ON_WORDS = ["on", "wake", "start"]
-PC_OFF_WORDS = ["off", "shut"]
+# Shutting down needs every one of these words. A false match here closes
+# everything on the PC, so it's deliberately stricter than turning it on --
+# "turn off my computer" or a passing mention of the computer isn't enough.
+PC_SHUTDOWN_WORDS = ["shut", "down", "computer"]
 
 # Phrases that map straight to a scene, addressing both strips. Kept to
 # multi-word phrases: a lone "bye" got inserted by the recognizer into a
@@ -104,7 +107,7 @@ GRAMMAR = (
     [WAKE_WORD, "on", "off"]
     + FILLERS
     + PC_WORDS
-    + [w for w in PC_ON_WORDS + PC_OFF_WORDS if w not in ("on", "off")]
+    + ["wake", "start", "shut"]
     + list(TARGETS)
     + list(COLORS)
     + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
@@ -148,8 +151,12 @@ def parse(text):
     words = text.split()
 
     if any(w in words for w in PC_WORDS):
-        if any(w in words for w in PC_OFF_WORDS):
+        if all(w in words for w in PC_SHUTDOWN_WORDS):
             return "pc", "off"
+        if "shut" in words or "off" in words:
+            # Sounds like a shutdown but doesn't meet the bar above; don't fall
+            # through and treat it as "on".
+            return None
         if any(w in words for w in PC_ON_WORDS):
             return "pc", "on"
         return None
@@ -191,6 +198,11 @@ def parse(text):
         return "on", last_color, target
 
     return None
+
+
+def request_pc_shutdown():
+    ok, message = PCControl.shutdown_pc()
+    print(f"  PC shutdown: {message}" if ok else f"  PC shutdown FAILED: {message}")
 
 
 def listen_loop(commands):
@@ -291,7 +303,9 @@ def _listen(commands):
                     PCControl.wake_pc()
                     print(f"heard: {text!r} -> sent wake packet to the PC")
                 else:
-                    print(f"heard: {text!r} -> turning the PC off isn't set up yet")
+                    print(f"heard: {text!r} -> asking the PC to shut down")
+                    # SSH takes a few seconds; don't stop listening meanwhile.
+                    threading.Thread(target=request_pc_shutdown, daemon=True).start()
                 continue
 
             print(f"heard: {text!r} -> {command[0]} rgb={command[1]} target={command[2]}")

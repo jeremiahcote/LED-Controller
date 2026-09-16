@@ -20,7 +20,7 @@ identifiers instead (see `LEDControllerMacOS.py`).
 | `LEDControllerGUIWindows.py` | Windows GUI |
 | `LEDStartupWindows.py` | Turns the strips cyan; was run by a Windows logon task (now disabled) |
 | `LEDVoiceControl.py` | Voice control ("Navi") |
-| `PCControl.py` | Turns the PC on with Wake-on-LAN |
+| `PCControl.py` | Turns the PC on (Wake-on-LAN) and off (SSH) |
 | `navi-voice.service` | systemd user service that runs voice control on the Pi |
 | `testMAC.py` | Scans for Bluetooth devices and prints their addresses |
 
@@ -34,6 +34,9 @@ seconds after saying "Navi" on its own.
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
 - "Navi, turn on my computer" / "Navi, wake up my PC" → Wake-on-LAN
+- "Navi, shut down my computer" → PC shuts down after a 30-second warning
+  (`shutdown /a` cancels). Needs all three words; "turn off my computer" does
+  nothing.
 
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
@@ -133,6 +136,47 @@ with:
   Enabled**
 - Network adapter properties: **Wake on Magic Packet** and **Shutdown
   Wake-On-Lan** enabled (the defaults).
+
+### Shutdown over SSH
+
+The Pi has its own key (`~/.ssh/pc_shutdown`) that the PC accepts for a single
+forced command, so it can't be used for anything but a 30-second shutdown. The
+PC's host key is pinned on the Pi as `jerrys-pc`, so the PC's IP can change.
+
+On the Pi, create the key:
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/pc_shutdown -C navi-pc-shutdown
+```
+
+On the PC, from an **administrator** PowerShell:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd; Set-Service sshd -StartupType Automatic
+
+# Keys only. KbdInteractiveAuthentication goes at the top because the end of
+# the file is inside a "Match Group administrators" block.
+$c = "$env:ProgramData\ssh\sshd_config"
+(Get-Content $c) -replace '^#?\s*PasswordAuthentication\s.*$', 'PasswordAuthentication no' | Set-Content $c -Encoding ascii
+Set-Content $c -Encoding ascii -Value ("KbdInteractiveAuthentication no`r`n" + (Get-Content $c -Raw))
+
+# Admin accounts read this file, not ~/.ssh/authorized_keys, and it's ignored
+# unless only Administrators and SYSTEM can access it.
+$keys = "$env:ProgramData\ssh\administrators_authorized_keys"
+Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /s /t 30 /c \"Navi is shutting down this PC in 30 seconds. Run shutdown /a to cancel.\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_shutdown.pub>'
+icacls $keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
+
+Set-NetFirewallRule -Name OpenSSH-Server-In-TCP -Enabled True -Profile Any -RemoteAddress LocalSubnet
+Restart-Service sshd
+```
+
+Then on the Pi, pin the PC's host key (compare it against
+`ssh-keyscan -t ed25519 127.0.0.1` run on the PC itself):
+
+```bash
+echo "jerrys-pc $(ssh-keyscan -t ed25519 192.168.50.181 2>/dev/null | cut -d' ' -f2-)" >> ~/.ssh/known_hosts
+```
 
 ## Troubleshooting
 
