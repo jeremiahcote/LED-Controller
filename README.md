@@ -170,7 +170,7 @@ Set-Content $c -Encoding ascii -Value ("KbdInteractiveAuthentication no`r`n" + (
 # Admin accounts read this file, not ~/.ssh/authorized_keys, and it's ignored
 # unless only Administrators and SYSTEM can access it.
 $keys = "$env:ProgramData\ssh\administrators_authorized_keys"
-Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /s /t 30 /c \"Navi is shutting down this PC in 30 seconds. Run shutdown /a to cancel.\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_shutdown.pub>'
+Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /s /t 30 /c \"Navi is shutting down this PC in 30 seconds. Say ''Navi, cancel'' or run shutdown /a to stop it.\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_shutdown.pub>'
 Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /a",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_cancel.pub>'
 icacls $keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
 
