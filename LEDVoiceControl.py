@@ -70,12 +70,16 @@ COMPOUND_COLORS = {
 # Which strip a phrase refers to. Anything else addresses both.
 TARGETS = {"bed": "led1", "wall": "led2"}
 
-# Phrases that map straight to a scene, addressing both strips.
+# Phrases that map straight to a scene, addressing both strips. Kept to
+# multi-word phrases: a lone "bye" got inserted by the recognizer into a
+# command that never said it, and turned the lights off. "goodbye" is matched
+# both ways because the model can return it as one word or two.
 PHRASES = {
     "i'm home": ("on", COLORS["cyan"]),
     "good morning": ("on", COLORS["cyan"]),
     "good night": ("off", (0, 0, 0)),
-    "bye": ("off", (0, 0, 0)),
+    "goodbye": ("off", (0, 0, 0)),
+    "good bye": ("off", (0, 0, 0)),
 }
 
 # Restricting the recognizer to a known vocabulary massively improves accuracy
@@ -128,13 +132,6 @@ def parse(text):
     """Map a command (the words after the wake word) to (power, rgb, target), or None."""
     global last_color
 
-    padded = f" {text} "
-    for phrase, (power, rgb) in PHRASES.items():
-        if f" {phrase} " in padded:
-            if power == "on":
-                last_color = rgb
-            return power, rgb, "both"
-
     words = text.split()
 
     target = "both"
@@ -154,9 +151,18 @@ def parse(text):
                 color = rgb
                 break
 
+    # An explicit colour beats a scene phrase: a stray phrase word is far
+    # likelier to be a misrecognition than a colour someone actually said.
     if color is not None:
         last_color = color
         return "on", color, target
+
+    padded = f" {text} "
+    for phrase, (power, rgb) in PHRASES.items():
+        if f" {phrase} " in padded:
+            if power == "on":
+                last_color = rgb
+            return power, rgb, "both"
 
     if "off" in words:
         return "off", (0, 0, 0), target
