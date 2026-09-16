@@ -171,7 +171,11 @@ async def send_commands(label, address, char_uuid, commands,
     if should_abort():
         raise Aborted()
 
-    client = BleakClient(device, timeout=15.0)
+    # Read the GATT table from the device instead of trusting Windows' cache.
+    # A stale cache shows up as "Characteristic ... was not found!" on a
+    # connection that otherwise succeeded.
+    client = BleakClient(device, timeout=15.0,
+                         winrt={"use_cached_services": False})
     try:
         await client.connect()
     except Exception as e:
@@ -306,13 +310,16 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int, target: str = "bo
         led1_commands = [
             (qhm_color(r, g, b), 0.2), (qhm_on(), 0.2), (qhm_color(r, g, b), 0.2)
         ]
-        # The strip has to be on before brightness and colour will stick, and
-        # the long trailing delay lets the last write flush -- disconnecting
-        # straight after it can discard an unacknowledged write.
+        # Colour and brightness first, power on last. Powering on first makes
+        # the strip light up at its previous colour for a moment before
+        # changing, which reads as an off/on flash. Colour is sent twice, as
+        # the working macOS script does. The long trailing delay lets the last
+        # write flush -- disconnecting straight after can discard it.
         led2_commands = melk_init() + [
-            (melk_on(), 0.2),
             (melk_brightness(FULL_BRIGHTNESS), 0.15),
-            (melk_color(r, g, b), 0.6),
+            (melk_color(r, g, b), 0.15),
+            (melk_color(r, g, b), 0.2),
+            (melk_on(), 0.6),
         ]
 
     # One strip at a time. Running the two connections concurrently halved the
