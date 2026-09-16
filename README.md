@@ -34,9 +34,11 @@ seconds after saying "Navi" on its own.
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
 - "Navi, turn on my computer" / "Navi, wake up my PC" → Wake-on-LAN
-- "Navi, shut down my computer" → PC shuts down after a 30-second warning
-  (`shutdown /a` cancels). Needs all three words; "turn off my computer" does
-  nothing.
+- "Navi, shut down my computer" (or "my PC") → PC shuts down after 30 seconds.
+  The bed lights flash red for 2 seconds at the start and again at 15 seconds,
+  then return to what Navi last set them to. Needs "shut" and "down"; "turn off
+  my computer" does nothing.
+- "Navi, cancel" → cancels a pending PC shutdown and any remaining flash
 
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
@@ -139,14 +141,16 @@ with:
 
 ### Shutdown over SSH
 
-The Pi has its own key (`~/.ssh/pc_shutdown`) that the PC accepts for a single
-forced command, so it can't be used for anything but a 30-second shutdown. The
-PC's host key is pinned on the Pi as `jerrys-pc`, so the PC's IP can change.
+The Pi has two keys, each of which the PC accepts for a single forced command:
+`~/.ssh/pc_shutdown` (a 30-second shutdown) and `~/.ssh/pc_cancel`
+(`shutdown /a`). Neither can do anything else. The PC's host key is pinned on
+the Pi as `jerrys-pc`, so the PC's IP can change.
 
-On the Pi, create the key:
+On the Pi, create the keys:
 
 ```bash
 ssh-keygen -t ed25519 -N "" -f ~/.ssh/pc_shutdown -C navi-pc-shutdown
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/pc_cancel -C navi-pc-cancel
 ```
 
 On the PC, from an **administrator** PowerShell:
@@ -165,6 +169,7 @@ Set-Content $c -Encoding ascii -Value ("KbdInteractiveAuthentication no`r`n" + (
 # unless only Administrators and SYSTEM can access it.
 $keys = "$env:ProgramData\ssh\administrators_authorized_keys"
 Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /s /t 30 /c \"Navi is shutting down this PC in 30 seconds. Run shutdown /a to cancel.\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_shutdown.pub>'
+Add-Content -Path $keys -Encoding ascii -Value 'command="shutdown /a",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty <contents of the Pi''s ~/.ssh/pc_cancel.pub>'
 icacls $keys /inheritance:r /grant "*S-1-5-32-544:F" /grant "*S-1-5-18:F"
 
 Set-NetFirewallRule -Name OpenSSH-Server-In-TCP -Enabled True -Profile Any -RemoteAddress LocalSubnet
