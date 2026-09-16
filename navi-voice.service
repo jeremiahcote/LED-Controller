@@ -9,7 +9,9 @@
 # Starting at boot without anyone logged in also needs, once:
 #   sudo loginctl enable-linger $USER
 #
-# Logs: journalctl --user -u navi-voice -f
+# Logs (the user journal isn't kept separately on Raspberry Pi OS, so query the
+# system journal by unit):
+#   journalctl _SYSTEMD_USER_UNIT=navi-voice.service -f -o cat
 
 [Unit]
 Description=Navi voice control for the room LED strips
