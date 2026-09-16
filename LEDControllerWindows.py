@@ -211,9 +211,6 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
 
     print(f"request: power={onOrOff}, RGB=({r}, {g}, {b})")
 
-    if not await bluetoothIsOn():
-        raise RuntimeError("Bluetooth not available or turned off.")
-
     if onOrOff == "off":
         led1_commands = [qhm_off()]
         led2_commands = [melk_off()]
@@ -223,18 +220,22 @@ async def apply_from_gui(onOrOff: str, r: int, g: int, b: int):
         led1_commands = [qhm_color(r, g, b), qhm_on(), qhm_color(r, g, b)]
         led2_commands = [melk_on(), melk_brightness(FULL_BRIGHTNESS), melk_color(r, g, b)]
 
-    led1_error = None
-    try:
-        await send_with_retries("LED 1", ADDRESS, CHAR_UUID, led1_commands)
-    except Exception as e:
-        # Don't let one strip being unreachable stop the other from responding.
-        led1_error = e
-        print(f"  {e}")
+    # Drive both strips at once. They're independent connections, and running
+    # them in series made every command wait out the slower strip -- roughly
+    # doubling latency for no benefit. return_exceptions keeps one strip being
+    # unreachable from stopping the other from responding.
+    results = await asyncio.gather(
+        send_with_retries("LED 1", ADDRESS, CHAR_UUID, led1_commands),
+        send_with_retries("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands),
+        return_exceptions=True,
+    )
 
-    await send_with_retries("LED 2", ADDRESS2, MELK_CHAR_UUID, led2_commands)
-
-    if led1_error:
-        raise led1_error
+    failures = [r for r in results if isinstance(r, Exception)]
+    if failures:
+        # Only worth the 2s scan once something has already gone wrong.
+        if not await bluetoothIsOn():
+            raise RuntimeError("Bluetooth not available or turned off.")
+        raise failures[0]
 
 
 # connect to bluetooth plus conditions
