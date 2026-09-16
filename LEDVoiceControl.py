@@ -275,15 +275,29 @@ def qhm_state_commands(power, rgb):
     return [(led.qhm_off(), 0.3)]
 
 
+FLASH_COLOR = (255, 0, 0)
+
+
 async def flash_bed_lights(ble):
-    """Bed lights red for FLASH_SECONDS, then back to their last known state."""
+    """Flash the bed lights for FLASH_SECONDS, then restore their last known state.
+
+    The flash is red, or off if the lights are already red, so it's visible
+    either way.
+    """
     power, rgb = strip_state("led1")
-    red = led.qhm_color(255, 0, 0)
     hold_writes = 4
-    commands = [(red, 0.1), (led.qhm_on(), 0.1)]
-    # Keep writing while it's red rather than sleeping: these strips drop an
-    # idle link quickly, and losing it here would leave the lights stuck red.
-    commands += [(red, (FLASH_SECONDS - 0.2) / hold_writes)] * hold_writes
+    hold = (FLASH_SECONDS - 0.2) / hold_writes
+    if power == "on" and rgb == FLASH_COLOR:
+        off = led.qhm_off()
+        commands = [(off, 0.1), (off, 0.1)]
+        # Repeated writes rather than a sleep: these strips drop an idle link
+        # quickly, and losing it here would leave the lights stuck off.
+        commands += [(off, hold)] * hold_writes
+    else:
+        red = led.qhm_color(*FLASH_COLOR)
+        commands = [(red, 0.1), (led.qhm_on(), 0.1)]
+        # Same reason: keep the link busy so it can't drop while red.
+        commands += [(red, hold)] * hold_writes
     commands += qhm_state_commands(power, rgb)
 
     async with ble.use():
