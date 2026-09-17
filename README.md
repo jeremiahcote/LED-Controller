@@ -21,6 +21,7 @@ identifiers instead (see `LEDControllerMacOS.py`).
 | `LEDStartupWindows.py` | Turns the strips cyan; was run by a Windows logon task (now disabled) |
 | `LEDVoiceControl.py` | Voice control ("Navi") |
 | `PCControl.py` | Turns the PC on (Wake-on-LAN) and off (SSH) |
+| `NaviWeb.py`, `navi_web.html` | Navi's web page and JSON API |
 | `navi-voice.service` | systemd user service that runs voice control on the Pi |
 | `testMAC.py` | Scans for Bluetooth devices and prints their addresses |
 
@@ -45,6 +46,26 @@ seconds after saying "Navi" on its own.
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
 that's still running.
+
+## Web interface and API
+
+Navi serves a phone-friendly control page at **http://navi.local:8765**
+(lights per strip, scenes, PC on / shut down / cancel). On iPhone, Share →
+Add to Home Screen makes it app-like. It runs inside the voice service, so web
+and voice commands share one queue and never fight over Bluetooth.
+
+Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
+(created on first start), sent as `Authorization: Bearer <token>` or
+`?token=<token>`. The page asks for it once and remembers it.
+
+| Request | Body |
+|---|---|
+| `GET /api/state` | — (strip states, shutdown countdown, colour names) |
+| `POST /api/lights` | `{"target": "both"\|"bed"\|"wall", "power": "on"\|"off", "color": "cyan"}` (`color` optional, or `[r, g, b]`) |
+| `POST /api/pc` | `{"action": "on"\|"shutdown"\|"cancel"}` |
+
+For an iPhone Shortcut, use **Get Contents of URL**: method POST, header
+`Authorization: Bearer <token>`, request body JSON as above.
 
 ## Raspberry Pi setup (Navi)
 

@@ -16,6 +16,7 @@ import time
 
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
+import NaviWeb
 import PCControl
 
 # NOTE: sounddevice is deliberately *not* imported here. Importing it
@@ -227,20 +228,30 @@ def load_strip_states():
 
 
 strip_states = load_strip_states()
+# The web interface reads these from its own thread.
+strip_states_lock = threading.Lock()
 
 
 def strip_state(strip):
-    state = strip_states.get(strip, DEFAULT_STRIP_STATE)
-    return state["power"], tuple(state["rgb"])
+    with strip_states_lock:
+        state = strip_states.get(strip, DEFAULT_STRIP_STATE)
+        return state["power"], tuple(state["rgb"])
+
+
+def snapshot_strip_states():
+    with strip_states_lock:
+        return {name: dict(state) for name, state in strip_states.items()}
 
 
 def remember_strip_state(target, power, rgb):
-    for strip in (("led1", "led2") if target == "both" else (target,)):
-        strip_states[strip] = {"power": power, "rgb": list(rgb)}
+    with strip_states_lock:
+        for strip in (("led1", "led2") if target == "both" else (target,)):
+            strip_states[strip] = {"power": power, "rgb": list(rgb)}
+        snapshot = json.dumps(strip_states)
     tmp = STATE_PATH + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(strip_states, f)
+            f.write(snapshot)
         os.replace(tmp, STATE_PATH)
     except OSError as e:
         print(f"  couldn't save light state: {e}")
@@ -320,12 +331,20 @@ class ShutdownCountdown:
         self.ble = ble
         self.task = None
         self.cancelled = asyncio.Event()
+        self.requested_at = None
+
+    def pending(self):
+        """Whether the PC is counting down to a shutdown Navi started."""
+        return (self.requested_at is not None
+                and not self.cancelled.is_set()
+                and time.monotonic() - self.requested_at < PCControl.SHUTDOWN_DELAY)
 
     def start(self):
         if self.task and not self.task.done():
             print("  shutdown already counting down")
             return
         self.cancelled = asyncio.Event()
+        self.requested_at = None
         self.task = asyncio.create_task(self._run(self.cancelled))
 
     def cancel(self):
@@ -346,6 +365,7 @@ class ShutdownCountdown:
             print(f"  PC shutdown FAILED: {message}")
             return
         print(f"  PC shutdown: {message}")
+        self.requested_at = started
         if cancelled.is_set():
             # "cancel" arrived while the request was still in flight, so its own
             # abort may have run before there was anything to abort.
@@ -486,14 +506,16 @@ async def run_light_command(command, ble, should_abort):
     remember_strip_state(target, power, (r, g, b))
 
 
-async def command_loop(commands):
+async def command_loop(commands, shared):
     """Runs everything that touches Bluetooth, on the main thread.
 
     Light commands: newest wins, and a newer one interrupts the one in flight.
     Shutdown and cancel are never dropped or interrupted by light commands.
+    Commands arrive from the voice listener and the web interface alike.
     """
     ble = BleGate()
     shutdown = ShutdownCountdown(ble)
+    shared["shutdown"] = shutdown
     pending = {"light": None}
     light_task = None
 
@@ -523,16 +545,49 @@ async def command_loop(commands):
         await asyncio.sleep(0.05)
 
 
+def _last_shown_color(strips, names):
+    for name in names:
+        rgb = tuple(strips.get(name, DEFAULT_STRIP_STATE)["rgb"])
+        if any(rgb):
+            return rgb
+    return tuple(DEFAULT_STRIP_STATE["rgb"])
+
+
+def web_state(shared):
+    strips = snapshot_strip_states()
+    shutdown = shared.get("shutdown")
+    return {
+        "strips": {
+            "bed": strips.get("led1", DEFAULT_STRIP_STATE),
+            "wall": strips.get("led2", DEFAULT_STRIP_STATE),
+        },
+        "shutdown_pending": bool(shutdown and shutdown.pending()),
+        # What "on" with no colour should use for each target.
+        "last_color": {
+            "led1": _last_shown_color(strips, ["led1"]),
+            "led2": _last_shown_color(strips, ["led2"]),
+            "both": _last_shown_color(strips, ["led2", "led1"]),
+        },
+    }
+
+
 def main():
     if not os.path.isdir(MODEL_PATH):
         sys.exit(f"Vosk model not found at {MODEL_PATH}")
 
     commands = queue.Queue()
+    shared = {}
     threading.Thread(target=listen_loop, args=(commands,), daemon=True).start()
+    NaviWeb.start(
+        submit=commands.put,
+        get_state=lambda: web_state(shared),
+        wake_pc=PCControl.wake_pc,
+        colors=COLORS,
+    )
 
     print(f"Listening. Say e.g. '{WAKE_WORD}, wall lights red' or '{WAKE_WORD}, good night'. Ctrl+C to stop.")
 
-    asyncio.run(command_loop(commands))
+    asyncio.run(command_loop(commands, shared))
 
 
 if __name__ == "__main__":

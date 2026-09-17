@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Navi">
+<title>Navi</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --card: #ffffff; --text: #16161a; --muted: #6b6b76;
+    --line: #e2e2e8; --accent: #3b6cf6; --danger: #d93a3a; --ok: #1f9d55;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f12; --card: #1a1a20; --text: #f1f1f4; --muted: #9a9aa6;
+      --line: #2b2b33; --accent: #6b8ffa; --danger: #f06262; --ok: #3cc47a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 520px; margin: 0 auto; display: grid; gap: 14px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 28px; margin: 4px 0; letter-spacing: -0.02em; }
+  #status { color: var(--muted); font-size: 14px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .row.two { grid-template-columns: repeat(2, 1fr); }
+  button {
+    font: inherit; font-weight: 600; min-height: 48px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+    cursor: pointer; touch-action: manipulation;
+  }
+  button:active { transform: scale(0.97); }
+  button.selected { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .swatch { min-height: 52px; border: 2px solid var(--line); }
+  .swatch span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .strips { display: flex; gap: 14px; color: var(--muted); font-size: 14px; margin-top: 10px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px;
+         border: 1px solid var(--line); vertical-align: -1px; }
+  #countdown { display: none; margin-top: 10px; color: var(--danger); font-weight: 600; }
+  #tokenBox { display: none; }
+  #tokenBox input {
+    width: 100%; font: inherit; padding: 12px; border-radius: 12px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Navi</h1>
+    <div id="status">Connecting…</div>
+  </header>
+
+  <section id="tokenBox">
+    <h2>Access token</h2>
+    <input id="tokenInput" type="password" autocomplete="off" placeholder="Paste Navi's token">
+    <button class="primary" id="saveToken" style="width:100%">Save</button>
+  </section>
+
+  <section>
+    <h2>Lights</h2>
+    <div class="row" id="targets">
+      <button data-target="both" class="selected">Both</button>
+      <button data-target="bed">Bed</button>
+      <button data-target="wall">Wall</button>
+    </div>
+    <div class="swatches" id="swatches" style="margin-top:10px"></div>
+    <div class="row two" style="margin-top:10px">
+      <button id="lightsOn">On</button>
+      <button id="lightsOff">Off</button>
+    </div>
+    <div class="strips" id="strips"></div>
+  </section>
+
+  <section>
+    <h2>Scenes</h2>
+    <div class="row two">
+      <button id="goodMorning">Good morning</button>
+      <button id="goodNight">Good night</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Computer</h2>
+    <div class="row">
+      <button id="pcOn">Turn on</button>
+      <button class="danger" id="pcShutdown">Shut down</button>
+      <button id="pcCancel">Cancel</button>
+    </div>
+    <div id="countdown">Shutdown in progress — tap Cancel to stop it.</div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = "";
+try { token = localStorage.getItem("naviToken") || ""; } catch (e) {}
+let target = "both";
+let colors = {};
+
+function setStatus(text) { $("status").textContent = text; }
+
+function showTokenBox(show) { $("tokenBox").style.display = show ? "block" : "none"; }
+
+async function api(path, body) {
+  const options = { headers: { "Authorization": "Bearer " + token } };
+  if (body) {
+    options.method = "POST";
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, options);
+  if (res.status === 401) { showTokenBox(true); throw new Error("Token needed"); }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+async function send(path, body, label) {
+  try {
+    setStatus(label + "…");
+    await api(path, body);
+    setStatus(label + " sent");
+    setTimeout(refresh, 1500);
+  } catch (e) {
+    setStatus(e.message);
+  }
+}
+
+function rgbCss(rgb) { return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`; }
+
+function renderSwatches() {
+  const box = $("swatches");
+  box.innerHTML = "";
+  for (const [name, rgb] of Object.entries(colors)) {
+    const b = document.createElement("button");
+    b.className = "swatch";
+    b.style.background = rgbCss(rgb);
+    b.title = name;
+    b.innerHTML = `<span>${name}</span>`;
+    b.onclick = () => send("/api/lights", { target, power: "on", color: name }, `${target} ${name}`);
+    box.appendChild(b);
+  }
+}
+
+function renderStrips(strips) {
+  $("strips").innerHTML = Object.entries(strips).map(([name, s]) => {
+    const color = s.power === "on" ? rgbCss(s.rgb) : "transparent";
+    return `<span><span class="dot" style="background:${color}"></span>${name}: ${s.power}</span>`;
+  }).join("");
+}
+
+async function refresh() {
+  if (!token) { showTokenBox(true); setStatus("Enter token"); return; }
+  try {
+    const state = await api("/api/state");
+    showTokenBox(false);
+    if (Object.keys(colors).length === 0) { colors = state.colors; renderSwatches(); }
+    renderStrips(state.strips);
+    $("countdown").style.display = state.shutdown_pending ? "block" : "none";
+    if ($("status").textContent === "Connecting…" || $("status").textContent === "Offline") setStatus("Ready");
+  } catch (e) {
+    if (e.message !== "Token needed") setStatus("Offline");
+  }
+}
+
+$("saveToken").onclick = () => {
+  token = $("tokenInput").value.trim();
+  try { localStorage.setItem("naviToken", token); } catch (e) {}
+  refresh();
+};
+
+for (const b of document.querySelectorAll("#targets button")) {
+  b.onclick = () => {
+    target = b.dataset.target;
+    for (const other of document.querySelectorAll("#targets button")) {
+      other.classList.toggle("selected", other === b);
+    }
+  };
+}
+
+$("lightsOn").onclick = () => send("/api/lights", { target, power: "on" }, `${target} on`);
+$("lightsOff").onclick = () => send("/api/lights", { target, power: "off" }, `${target} off`);
+$("goodMorning").onclick = () => send("/api/lights", { target: "both", power: "on", color: "cyan" }, "Good morning");
+$("goodNight").onclick = () => send("/api/lights", { target: "both", power: "off" }, "Good night");
+$("pcOn").onclick = () => send("/api/pc", { action: "on" }, "Waking PC");
+$("pcCancel").onclick = () => send("/api/pc", { action: "cancel" }, "Cancelling shutdown");
+$("pcShutdown").onclick = () => {
+  if (confirm("Shut down the computer? It turns off in 30 seconds unless cancelled.")) {
+    send("/api/pc", { action: "shutdown" }, "Shutting down PC");
+  }
+};
+
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>
