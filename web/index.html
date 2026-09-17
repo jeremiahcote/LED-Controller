@@ -160,9 +160,10 @@
     background: linear-gradient(180deg, #34425f, #1b243a);
     box-shadow: 0 6px 12px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .18), inset 0 -1px 0 rgba(0, 0, 0, .4);
     transition: transform .38s cubic-bezier(.3, 1.35, .5, 1); }
-  .switch[aria-checked="true"] .knob { transform: translateX(100%); }
+  /* The raised knob sits on the current state's label. */
+  .switch[aria-checked="false"] .knob { transform: translateX(100%); }
   .switch .lbl { position: relative; z-index: 1; display: grid; place-items: center;
-    font-weight: 700; font-size: 13px; letter-spacing: .14em; color: #5d6b8c; transition: color .3s ease, text-shadow .3s ease; }
+    font-weight: 700; font-size: 13px; letter-spacing: .14em; color: #3f4b66; transition: color .3s ease, text-shadow .3s ease; }
   .switch[aria-checked="true"] .lbl.on { color: var(--lit); text-shadow: 0 0 8px rgba(var(--c), .9), 0 0 20px rgba(var(--c), .6); }
   .switch[aria-checked="false"] .lbl.off { color: var(--lit); opacity: .8; text-shadow: 0 0 8px rgba(var(--c), .45); }
 
