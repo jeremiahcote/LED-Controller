@@ -224,6 +224,13 @@
     background: linear-gradient(180deg, rgba(60, 90, 150, .35), rgba(20, 30, 55, .5)); border: 1px solid var(--line-strong); }
   .pc-icon svg { width: 28px; height: 28px; color: #9fd0ff; }
   .pc-title { font-weight: 700; font-size: 17px; }
+  .pc-state { display: inline-flex; align-items: center; gap: 7px; margin-top: 3px; font-size: 13px;
+    font-weight: 600; color: var(--muted); }
+  .pc-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .pc[data-pc="on"] .pc-state { color: var(--ok); }
+  .pc[data-pc="on"] .pc-state .dot { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+  .pc[data-pc="off"] .pc-state { color: var(--muted); }
+  .btn[disabled] { opacity: .4; cursor: default; box-shadow: none; }
   .pc-sub { color: var(--muted); font-size: 13px; }
   .pc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .countdown { display: none; align-items: center; gap: 14px; margin-bottom: 14px; padding: 12px 14px;
@@ -363,11 +370,11 @@
 
   <section class="card" id="pcCard">
     <div class="card-head"><h2>Computer</h2></div>
-    <div class="pc">
+    <div class="pc" id="pcBox" data-pc="unknown">
       <div class="pc-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
       <div>
         <div class="pc-title">Jerry's PC</div>
-        <div class="pc-sub">Wake-on-LAN and remote shutdown</div>
+        <div class="pc-state"><span class="dot"></span><span id="pcState">Checking…</span></div>
       </div>
     </div>
     <div class="countdown" id="countdown" role="alert">
@@ -801,6 +808,14 @@ $("#pcCancel").addEventListener("click", () => {
   renderCountdown();
   send("/api/pc", { action: "cancel" }, "Shutdown cancelled");
 });
+let pcOn = null;
+function renderPc() {
+  $("#pcBox").dataset.pc = pcOn === null ? "unknown" : pcOn ? "on" : "off";
+  $("#pcState").textContent = pcOn === null ? "Checking…" : pcOn ? "On" : "Off";
+  $("#pcOn").disabled = pcOn === true;
+  $("#pcShutdown").disabled = pcOn === false;
+}
+
 function renderCountdown() {
   const left = countdownEnd ? Math.max(0, Math.ceil((countdownEnd - Date.now()) / 1000)) : 0;
   const on = left > 0;
@@ -825,6 +840,8 @@ async function refresh() {
     showToken(false);
     setStatus("online", "Online");
     serverStrips = state.strips || {};
+    pcOn = typeof state.pc_on === "boolean" ? state.pc_on : null;
+    renderPc();
     if (state.shutdown_pending && typeof state.shutdown_seconds_left === "number") {
       countdownEnd = Date.now() + state.shutdown_seconds_left * 1000;
     } else if (!state.shutdown_pending && countdownEnd && countdownEnd - Date.now() < 27000) {

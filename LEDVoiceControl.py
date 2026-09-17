@@ -434,6 +434,7 @@ class ShutdownCountdown:
             return
         print(f"  PC shutdown: {message}")
         self.requested_at = started
+        request_pc_recheck()
         if cancelled.is_set():
             # "cancel" arrived while the request was still in flight, so its own
             # abort may have run before there was anything to abort.
@@ -573,7 +574,7 @@ def _listen(commands):
 
             if command[0] == "pc_on":
                 # Handled right here: it's a single UDP send, no Bluetooth.
-                PCControl.wake_pc()
+                wake_pc()
                 print(f"heard: {masked(text)!r} -> sent wake packet to the PC")
                 continue
 
@@ -650,6 +651,34 @@ def _last_shown_color(strips, names):
     return tuple(DEFAULT_STRIP_STATE["rgb"])
 
 
+# How often to check whether the PC answers, for the web page's status dot.
+# Checked again right away after a wake or shutdown, so the page keeps up.
+PC_POLL_SECONDS = 8.0
+PC_RECHECK = threading.Event()
+_pc_recheck_until = 0.0
+
+
+def watch_pc(shared):
+    while True:
+        shared["pc_on"] = PCControl.pc_is_on()
+        # Booting or shutting down takes a while to show up, so after either
+        # one look more often for a minute or two.
+        PC_RECHECK.wait(2.0 if PC_RECHECK.is_set() else PC_POLL_SECONDS)
+        if PC_RECHECK.is_set() and time.monotonic() > _pc_recheck_until:
+            PC_RECHECK.clear()
+
+
+def wake_pc():
+    PCControl.wake_pc()
+    request_pc_recheck()
+
+
+def request_pc_recheck():
+    global _pc_recheck_until
+    _pc_recheck_until = time.monotonic() + 120
+    PC_RECHECK.set()
+
+
 def web_state(shared):
     strips = snapshot_strip_states()
     shutdown = shared.get("shutdown")
@@ -661,6 +690,7 @@ def web_state(shared):
             "bed": strips.get("led1", DEFAULT_STRIP_STATE),
             "wall": strips.get("led2", DEFAULT_STRIP_STATE),
         },
+        "pc_on": shared.get("pc_on"),
         "shutdown_pending": pending,
         "shutdown_seconds_left": (
             max(0, round(PCControl.SHUTDOWN_DELAY - (time.monotonic() - requested_at)))
@@ -680,11 +710,13 @@ def main():
 
     commands = queue.Queue()
     shared = {}
+
     threading.Thread(target=listen_loop, args=(commands,), daemon=True).start()
+    threading.Thread(target=watch_pc, args=(shared,), daemon=True).start()
     NaviWeb.start(
         submit=commands.put,
         get_state=lambda: web_state(shared),
-        wake_pc=PCControl.wake_pc,
+        wake_pc=wake_pc,
         colors=COLORS,
     )
 

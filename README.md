@@ -65,6 +65,9 @@ Navi serves a phone-friendly control page at **http://navi.local:8765**:
 an on/off switch per strip (lit in the strip's current or last colour), a
 colour wheel with shades plus a precise picker (drag for any RGB value, or
 type R/G/B/hex), and PC power on / shut down with a live cancel countdown.
+The page shows whether the PC is on: Navi checks every few seconds whether it
+answers on its SSH port (reachable, which doesn't mean signed in), and greys
+out whichever power button doesn't apply.
 Tap a strip's card to choose which strips a colour goes to. On iPhone, Share →
 Add to Home Screen installs it with Navi's icon. It runs inside the voice service, so web
 and voice commands share one queue and never fight over Bluetooth.
@@ -75,7 +78,7 @@ Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
 
 | Request | Body |
 |---|---|
-| `GET /api/state` | — (strip states incl. `last_rgb`, `shutdown_pending`, `shutdown_seconds_left`, colour names) |
+| `GET /api/state` | — (strip states incl. `last_rgb`, `pc_on`, `shutdown_pending`, `shutdown_seconds_left`, colour names) |
 | `POST /api/lights` | `{"target": "both"\|"bed"\|"wall", "power": "on"\|"off", "color": "cyan"}` (`color` optional, or `[r, g, b]`) |
 | `POST /api/pc` | `{"action": "on"\|"shutdown"\|"cancel"}` |
 

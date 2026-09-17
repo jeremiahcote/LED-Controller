@@ -48,6 +48,19 @@ def find_pc_ip() -> str:
     return PC_LAST_KNOWN_IP
 
 
+def pc_is_on(timeout: float = 1.5) -> bool:
+    """Whether the PC answers on its SSH port.
+
+    Just reachability -- it says nothing about whether anyone is signed in.
+    A shut-down PC refuses or ignores the connection; either way it's False.
+    """
+    try:
+        with socket.create_connection((find_pc_ip(), 22), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 def _run_forced_command(key: str) -> tuple[subprocess.CompletedProcess | None, str]:
     """SSH to the PC with a restricted key; the PC decides what actually runs."""
     host = find_pc_ip()
