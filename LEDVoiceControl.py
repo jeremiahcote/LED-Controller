@@ -76,44 +76,57 @@ TARGETS = {"bed": "led1", "wall": "led2"}
 
 # Mentioning one of these makes the command about the PC rather than the lights.
 PC_WORDS = ["computer", "pc"]
-PC_ON_WORDS = ["on", "wake", "start", "boot"]
+# All of these need the unlock passphrase (see UNLOCK_PASSPHRASE below) -- there's
+# no passphrase-free way to wake the PC by voice.
+PC_ON_WORDS = ["on", "wake", "start", "boot", "unlock"]
 # Shutting down needs one of these word pairs plus a PC word ("shut down my
 # computer", "turn my PC off"). A lone "off" or "shut" isn't enough, since a
 # false match closes everything on the PC.
 PC_SHUTDOWN_PAIRS = [("shut", "down"), ("turn", "off")]
 
-# A voice shutdown also has to include a passphrase, so someone else in the room
-# can't do it. It lives only on the machine running Navi -- this repository is
-# public -- as one line of plain words in this file. Without the file, voice
-# shutdown is disabled (the web interface's token-protected button still works).
+# Locks Navi so it acts on nothing but "Navi, unlock controls" -- for when
+# someone else is in the room and shouldn't be able to touch the lights or PC.
+# Not password protected: it's meant to block casual use, not a determined
+# adversary, and the point is it's quick to say.
+LOCKDOWN_WORD = "lockdown"
+UNLOCK_CONTROLS_WORDS = ("unlock", "controls")
+
+# A voice shutdown or PC unlock/wake also has to include a passphrase, so
+# someone else in the room can't do it. Each lives only on the machine running
+# Navi -- this repository is public -- as one line of plain words in its own
+# file. Without the file, that voice action is disabled (the web interface's
+# token-protected buttons still work).
 SHUTDOWN_PASSPHRASE_PATH = os.path.expanduser("~/.config/navi/shutdown_passphrase")
+UNLOCK_PASSPHRASE_PATH = os.path.expanduser("~/.config/navi/unlock_passphrase")
 
 
-def load_shutdown_passphrase():
+def load_passphrase(path):
     try:
-        with open(SHUTDOWN_PASSPHRASE_PATH, encoding="utf-8") as f:
-            words = f.read().lower().split()
+        with open(path, encoding="utf-8") as f:
+            return f.read().lower().split()
     except OSError:
         return []
-    return words
 
 
-SHUTDOWN_PASSPHRASE = load_shutdown_passphrase()
+SHUTDOWN_PASSPHRASE = load_passphrase(SHUTDOWN_PASSPHRASE_PATH)
+UNLOCK_PASSPHRASE = load_passphrase(UNLOCK_PASSPHRASE_PATH)
 
 
-def has_passphrase(words):
+def has_passphrase(words, passphrase):
     # Compared with spaces removed, since the recognizer may split a word the
     # way it's written in the file ("sunflower" -> "sun flower") or join one.
-    return bool(SHUTDOWN_PASSPHRASE) and "".join(SHUTDOWN_PASSPHRASE) in "".join(words)
+    # Not anchored to a position in the utterance, so the passphrase can be
+    # said before or after the rest of the command.
+    return bool(passphrase) and "".join(passphrase) in "".join(words)
 
 
 def masked(text):
-    """Text safe to log: any word that is, or is part of, the passphrase is hidden."""
-    secret = "".join(SHUTDOWN_PASSPHRASE)
-    if not secret:
+    """Text safe to log: any word that is, or is part of, a passphrase is hidden."""
+    secrets = ["".join(p) for p in (SHUTDOWN_PASSPHRASE, UNLOCK_PASSPHRASE) if p]
+    if not secrets:
         return text
     return " ".join(
-        "***" if len(w) >= 3 and w in secret else w
+        "***" if len(w) >= 3 and any(w in secret for secret in secrets) else w
         for w in text.split()
     )
 
@@ -153,18 +166,23 @@ PHRASES = {
 FILLERS = ["turn", "the", "to", "make", "set", "please", "all", "light", "lights",
            "my", "up", "down"]
 
-GRAMMAR = (
-    [WAKE_WORD, "on", "off", "cancel"]
+_GRAMMAR_WORDS = (
+    [WAKE_WORD, "on", "off", "cancel", LOCKDOWN_WORD]
     + FILLERS
     + PC_WORDS
-    + ["wake", "start", "boot", "shut"]
+    + PC_ON_WORDS
+    + list(UNLOCK_CONTROLS_WORDS)
+    + ["shut"]
     + list(TARGETS)
     + list(COLORS)
     + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
     + list(PHRASES)
     + SHUTDOWN_PASSPHRASE
-    + ["[unk]"]
+    + UNLOCK_PASSPHRASE
 )
+# PC_ON_WORDS/UNLOCK_CONTROLS_WORDS overlap with the base list and each other
+# ("on", "unlock"); Vosk's grammar mode wants each word once.
+GRAMMAR = list(dict.fromkeys(_GRAMMAR_WORDS)) + ["[unk]"]
 
 last_color = (255, 255, 255)
 
@@ -195,26 +213,34 @@ def after_wake_word(text):
 def parse(text):
     """Map a command (the words after the wake word) to an action, or None.
 
-    Returns ("lights", power, rgb, target), ("pc_on",), ("shutdown",) or
-    ("cancel",).
+    Returns ("lights", power, rgb, target), ("pc_on",), ("shutdown",),
+    ("cancel",), ("lockdown",) or ("unlock_controls",).
     """
     global last_color
 
     words = text.split()
 
-    # Checked first: when in doubt, cancelling is the safe reading.
+    # Checked first, and above the lockdown gate in the caller: it has to work
+    # no matter what else was heard, or a lockdown could never be lifted.
+    if all(w in words for w in UNLOCK_CONTROLS_WORDS):
+        return ("unlock_controls",)
+
+    # Checked next: when in doubt, cancelling is the safe reading.
     if "cancel" in words:
         return ("cancel",)
 
+    if LOCKDOWN_WORD in words:
+        return ("lockdown",)
+
     if any(w in words for w in PC_WORDS):
         if any(a in words and b in words for a, b in PC_SHUTDOWN_PAIRS):
-            return ("shutdown",) if has_passphrase(words) else ("shutdown_denied",)
+            return ("shutdown",) if has_passphrase(words, SHUTDOWN_PASSPHRASE) else ("shutdown_denied",)
         if "shut" in words or "off" in words:
             # Sounds like a shutdown but doesn't meet the bar above; don't fall
             # through and treat it as "on".
             return None
         if any(w in words for w in PC_ON_WORDS):
-            return ("pc_on",)
+            return ("pc_on",) if has_passphrase(words, UNLOCK_PASSPHRASE) else ("pc_on_denied",)
         return None
 
     target = "both"
@@ -469,6 +495,8 @@ def _listen(commands):
         last_text = None
         last_text_at = 0.0
         awake_until = 0.0
+        # While set, every command but "Navi, unlock controls" is ignored.
+        locked_down = False
 
         while True:
             try:
@@ -512,10 +540,30 @@ def _listen(commands):
                 print(f"  (not a command: {masked(text)!r})")
                 continue
 
+            if command[0] == "unlock_controls":
+                # Handled here regardless of locked_down: it's the only way out.
+                was_locked, locked_down = locked_down, False
+                print(f"heard: {masked(text)!r} -> "
+                      f"{'lockdown lifted' if was_locked else 'unlock controls (not locked)'}")
+                continue
+
+            if locked_down:
+                print(f"  (locked down, ignored: {masked(text)!r})")
+                continue
+
+            if command[0] == "lockdown":
+                locked_down = True
+                print(f"heard: {masked(text)!r} -> lockdown engaged")
+                continue
+
             if command[0] == "shutdown_denied":
                 # Deliberately doesn't echo what was heard, so the log doesn't
                 # help anyone guess the passphrase.
                 print("heard a PC shutdown request without the passphrase; ignored")
+                continue
+
+            if command[0] == "pc_on_denied":
+                print("heard a PC wake/unlock request without the passphrase; ignored")
                 continue
 
             if command[0] == "pc_on":

@@ -34,7 +34,12 @@ seconds after saying "Navi" on its own.
 - "Navi, lights off" / "Navi, wall lights off"
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
-- "Navi, turn on / boot up / wake up / start my computer" → Wake-on-LAN
+- "Navi, turn on / boot up / wake up / start / unlock my computer, *passphrase*" →
+  Wake-on-LAN. The passphrase is kept only on the Pi in
+  `~/.config/navi/unlock_passphrase` (one line of words, `chmod 600`), never in
+  this repo, and is masked in logs. Without it the request is ignored; without
+  the file, voice wake/unlock is off entirely -- there's no passphrase-free way
+  to wake the PC by voice.
 - "Navi, shut down / turn off my computer, *passphrase*" → PC shuts down after 30 seconds.
   The passphrase is kept only on the Pi in `~/.config/navi/shutdown_passphrase`
   (one line of words, `chmod 600`), never in this repo, and is masked in logs.
@@ -45,6 +50,10 @@ seconds after saying "Navi" on its own.
 
 "Computer" and "PC" are interchangeable in all PC commands.
 - "Navi, cancel" → cancels a pending PC shutdown and any remaining flash
+- "Navi, lockdown" → ignores every voice command (lights, PC, cancel, all of it)
+  until someone says "Navi, unlock controls". Meant for when someone else is in
+  the room and shouldn't be able to touch anything by voice; it isn't itself
+  passphrase-protected, so anyone who knows Navi can lift it.
 
 Colours: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
