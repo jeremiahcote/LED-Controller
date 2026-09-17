@@ -58,7 +58,7 @@
 
   main { max-width: 1040px; margin: 0 auto; display: grid; gap: 16px; }
   @media (min-width: 900px) {
-    /* The last row is flexible so the tall colour card's extra height lands
+    /* The last row is flexible so the tall color card's extra height lands
        below the computer card instead of opening a gap under the lights. */
     main { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto 1fr; align-items: start; }
     .hero, #tokenCard { grid-column: 1 / -1; }
@@ -152,22 +152,23 @@
     background-size: 11px 8px; background-repeat: space no-repeat; opacity: .22; transition: opacity .4s ease, filter .4s ease; }
   .strip.is-on .ledbar { opacity: 1; filter: drop-shadow(0 0 4px rgba(var(--c), .9)); }
 
-  .switch { position: relative; display: grid; grid-template-columns: 1fr 1fr; width: 100%; height: 50px;
+  .switch, .powerswitch { position: relative; display: grid; grid-template-columns: 1fr 1fr; width: 100%; height: 50px;
     padding: 4px; border-radius: 999px; border: 1px solid rgba(0, 0, 0, .6);
     background: linear-gradient(180deg, #060a14, #121a2c);
     box-shadow: inset 0 3px 8px rgba(0, 0, 0, .75), inset 0 -1px 0 rgba(255, 255, 255, .05), 0 1px 0 rgba(255, 255, 255, .07); }
-  .switch .knob { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 999px;
+  .switch .knob, .powerswitch .knob { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 999px;
     background: linear-gradient(180deg, #34425f, #1b243a);
     box-shadow: 0 6px 12px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .18), inset 0 -1px 0 rgba(0, 0, 0, .4);
     transition: transform .38s cubic-bezier(.3, 1.35, .5, 1); }
   /* The raised knob sits on the current state's label. */
-  .switch[aria-checked="false"] .knob { transform: translateX(100%); }
-  .switch .lbl { position: relative; z-index: 1; display: grid; place-items: center;
+  .switch[aria-checked="false"] .knob,
+  .powerswitch[data-state="off"] .knob, .powerswitch[data-state="unknown"] .knob { transform: translateX(100%); }
+  .switch .lbl, .powerswitch .lbl { position: relative; z-index: 1; display: grid; place-items: center;
     font-weight: 700; font-size: 13px; letter-spacing: .14em; color: #3f4b66; transition: color .3s ease, text-shadow .3s ease; }
   .switch[aria-checked="true"] .lbl.on { color: var(--lit); text-shadow: 0 0 8px rgba(var(--c), .9), 0 0 20px rgba(var(--c), .6); }
   .switch[aria-checked="false"] .lbl.off { color: var(--lit); opacity: .8; text-shadow: 0 0 8px rgba(var(--c), .45); }
 
-  /* ---------- colour ---------- */
+  /* ---------- color ---------- */
   .seg { display: inline-grid; grid-auto-flow: column; padding: 3px; border-radius: 12px;
     background: rgba(3, 8, 20, .6); border: 1px solid var(--line); }
   .seg button { border: 0; background: none; padding: 7px 14px; border-radius: 9px; font-size: 13px;
@@ -232,7 +233,16 @@
   .pc[data-pc="off"] .pc-state { color: var(--muted); }
   .btn[disabled] { opacity: .4; cursor: default; box-shadow: none; }
   .pc-sub { color: var(--muted); font-size: 13px; }
-  .pc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .powerswitch { height: 56px; }
+  .powerswitch .lbl { border: 0; background: none; font: inherit; font-weight: 700; font-size: 13px;
+    letter-spacing: .14em; color: #3f4b66; }
+  .powerswitch[data-state="on"] .lbl.on { color: #8bf3c4; text-shadow: 0 0 8px rgba(65, 227, 154, .9), 0 0 20px rgba(65, 227, 154, .5); }
+  .powerswitch[data-state="off"] .lbl.off { color: #ffb0b8; text-shadow: 0 0 8px rgba(255, 93, 108, .8); }
+  /* Only the side you are not on does anything. */
+  .powerswitch[data-state="on"] .lbl.on, .powerswitch[data-state="off"] .lbl.off { cursor: default; }
+  .powerswitch .lbl:not([data-active="true"]):hover { color: #93a4c6; }
+  .powerswitch.busy { opacity: .45; pointer-events: none; }
+  .pc-foot { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12.5px; }
   .countdown { display: none; align-items: center; gap: 14px; margin-bottom: 14px; padding: 12px 14px;
     border-radius: 16px; border: 1px solid rgba(255, 93, 108, .4); background: rgba(80, 14, 26, .45); }
   .countdown.show { display: flex; animation: alarm 1.6s ease-in-out infinite; }
@@ -298,7 +308,7 @@
   <section class="card" id="lightsCard">
     <div class="card-head">
       <h2>Lights</h2>
-      <span class="hint" id="targetHint">Colour → both</span>
+      <span class="hint" id="targetHint">Color → both</span>
     </div>
     <div class="strips">
       <article class="strip" data-strip="bed">
@@ -328,15 +338,15 @@
 
   <section class="card" id="colorCard">
     <div class="card-head">
-      <h2>Colour</h2>
-      <div class="seg" role="tablist" aria-label="Colour picker">
+      <h2>Color</h2>
+      <div class="seg" role="tablist" aria-label="Color picker">
         <button type="button" role="tab" data-mode="palette" aria-selected="true">Palette</button>
         <button type="button" role="tab" data-mode="precise" aria-selected="false">Precise</button>
       </div>
     </div>
 
     <div class="palette" id="palettePane">
-      <svg id="wheel" viewBox="-172 -172 344 344" role="group" aria-label="Colour wheel"></svg>
+      <svg id="wheel" viewBox="-172 -172 344 344" role="group" aria-label="Color wheel"></svg>
       <div class="shades" id="shades"></div>
     </div>
 
@@ -386,13 +396,13 @@
       </div>
       <div class="countdown-text"><strong>Shutting down</strong>Cancel to keep it on.</div>
     </div>
-    <div class="pc-actions">
-      <button class="btn primary" type="button" id="pcOn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v8M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>Power on
-      </button>
-      <button class="btn danger" type="button" id="pcShutdown">Shut down</button>
-      <button class="btn danger-solid" type="button" id="pcCancel" hidden style="grid-column: 1 / -1">Cancel shutdown</button>
+    <div class="powerswitch" id="pcSwitch" data-state="unknown">
+      <span class="knob"></span>
+      <button class="lbl on" type="button" id="pcOn" aria-label="Power on the computer">ON</button>
+      <button class="lbl off" type="button" id="pcShutdown" aria-label="Shut down the computer">OFF</button>
     </div>
+    <div class="pc-foot" id="pcFoot">Tap OFF to shut down</div>
+    <button class="btn danger-solid" type="button" id="pcCancel" hidden style="width: 100%; margin-top: 12px">Cancel shutdown</button>
   </section>
 </main>
 
@@ -433,7 +443,7 @@ let haveColor = false;
 let serverStrips = {};
 const pending = {};
 
-/* ---------- colour helpers ---------- */
+/* ---------- color helpers ---------- */
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 function hsvToRgb(h, s, v) {
   const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
@@ -459,7 +469,7 @@ function parseHex(s) {
 const tint = (rgb, k) => rgb.map((c) => Math.round(c + (255 - c) * k));
 const same = (a, b) => a && b && a.every((v, i) => v === b[i]);
 const cleanRgb = (v) => Array.isArray(v) && v.length === 3 ? v.map((x) => clamp(Math.round(Number(x)) || 0, 0, 255)) : null;
-/* A readable version of a colour for glowing text on the dark switch. */
+/* A readable version of a color for glowing text on the dark switch. */
 function litColor(rgb) {
   const max = Math.max(...rgb);
   if (!max) return "#cfd8ea";
@@ -542,7 +552,7 @@ function renderStrips() {
     card.querySelector(".strip-sub").textContent = on ? `On · ${toHex(v.rgb)}` : `Off · was ${toHex(v.rgb)}`;
   }
   const list = [...selected];
-  $("#targetHint").textContent = "Colour → " + (list.length === 2 ? "both" : NAMES[list[0]].toLowerCase());
+  $("#targetHint").textContent = "Color → " + (list.length === 2 ? "both" : NAMES[list[0]].toLowerCase());
   $(".apply-text span").textContent = `${current.join(", ")} · ${list.length === 2 ? "Bed & Wall" : NAMES[list[0]]}`;
 }
 
@@ -580,7 +590,7 @@ function setColor(rgb, fromHsv) {
   current = rgb.slice();
   if (!fromHsv) {
     const next = rgbToHsv(current);
-    // Keep the knob's hue/saturation when the colour is black or grey.
+    // Keep the knob's hue/saturation when the color is black or grey.
     if (next[2] === 0) next[0] = hsv[0], next[1] = hsv[1];
     else if (next[1] === 0) next[0] = hsv[0];
     hsv = next;
@@ -755,10 +765,10 @@ for (const [i, id] of ["#inR", "#inG", "#inB"].entries()) {
 $("#inHex").addEventListener("change", (e) => {
   const rgb = parseHex(e.target.value);
   if (rgb) applyColor(rgb);
-  else { e.target.value = toHex(current); toast("Use a hex colour like #24AADB", true); }
+  else { e.target.value = toHex(current); toast("Use a hex color like #24AADB", true); }
 });
 
-/* ---------- colour rendering ---------- */
+/* ---------- color rendering ---------- */
 function renderColor() {
   document.documentElement.style.setProperty("--cur", current.join(", "));
   $("#curHex").textContent = toHex(current);
@@ -787,8 +797,12 @@ window.addEventListener("resize", () => { if (!$("#precisePane").hidden) drawDis
 
 /* ---------- computer ---------- */
 let countdownEnd = null;
-$("#pcOn").addEventListener("click", () => send("/api/pc", { action: "on" }, "Wake signal sent"));
+$("#pcOn").addEventListener("click", () => {
+  if (pcOn === true) { toast("Already on"); return; }
+  send("/api/pc", { action: "on" }, "Wake signal sent");
+});
 $("#pcShutdown").addEventListener("click", () => {
+  if (pcOn === false) { toast("Already off"); return; }
   const dlg = $("#confirmDialog");
   if (typeof dlg.showModal !== "function") {
     if (confirm("Shut down the computer? It turns off in 30 seconds.")) shutdown();
@@ -810,10 +824,14 @@ $("#pcCancel").addEventListener("click", () => {
 });
 let pcOn = null;
 function renderPc() {
-  $("#pcBox").dataset.pc = pcOn === null ? "unknown" : pcOn ? "on" : "off";
+  const state = pcOn === null ? "unknown" : pcOn ? "on" : "off";
+  $("#pcBox").dataset.pc = state;
+  $("#pcSwitch").dataset.state = state;
   $("#pcState").textContent = pcOn === null ? "Checking…" : pcOn ? "On" : "Off";
-  $("#pcOn").disabled = pcOn === true;
-  $("#pcShutdown").disabled = pcOn === false;
+  $("#pcOn").dataset.active = String(pcOn === true);
+  $("#pcShutdown").dataset.active = String(pcOn === false);
+  $("#pcFoot").textContent = pcOn === true ? "Tap OFF to shut down"
+    : pcOn === false ? "Tap ON to wake it with Wake-on-LAN" : "Checking whether the PC is reachable";
 }
 
 function renderCountdown() {
@@ -821,8 +839,8 @@ function renderCountdown() {
   const on = left > 0;
   $("#countdown").classList.toggle("show", on);
   $("#pcCancel").hidden = !on;
-  $("#pcShutdown").hidden = on;
-  $("#pcOn").hidden = on;
+  $("#pcSwitch").classList.toggle("busy", on);
+  $("#pcFoot").hidden = on;
   if (on) {
     $("#ringNum").textContent = left;
     $("#ringArc").setAttribute("stroke-dashoffset", String(125.66 * (1 - left / 30)));

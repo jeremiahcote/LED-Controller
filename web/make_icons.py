@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def radial(size, inner, outer, power=1.0):
-    """RGBA radial gradient from inner (centre) to outer (edge) colours."""
+    """RGBA radial gradient from inner (centre) to outer (edge) colors."""
     g = Image.radial_gradient("L").resize((size, size))
     if power != 1.0:
         g = g.point(lambda v: int(255 * (v / 255) ** power))

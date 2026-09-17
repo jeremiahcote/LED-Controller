@@ -260,8 +260,8 @@ def parse(text):
                 color = rgb
                 break
 
-    # An explicit colour beats a scene phrase: a stray phrase word is far
-    # likelier to be a misrecognition than a colour someone actually said.
+    # An explicit color beats a scene phrase: a stray phrase word is far
+    # likelier to be a misrecognition than a color someone actually said.
     if color is not None:
         last_color = color
         return "lights", "on", color, target
@@ -310,7 +310,7 @@ def remember_strip_state(target, power, rgb):
     with strip_states_lock:
         for strip in (("led1", "led2") if target == "both" else (target,)):
             # last_rgb survives turning off, so the web page can show (and "on"
-            # can restore) the colour a strip had before.
+            # can restore) the color a strip had before.
             previous = strip_states.get(strip, DEFAULT_STRIP_STATE)
             last_rgb = (list(rgb) if power == "on" and any(rgb)
                         else previous.get("last_rgb", previous["rgb"]))
@@ -695,7 +695,7 @@ def web_state(shared):
         "shutdown_seconds_left": (
             max(0, round(PCControl.SHUTDOWN_DELAY - (time.monotonic() - requested_at)))
             if pending else None),
-        # What "on" with no colour should use for each target.
+        # What "on" with no color should use for each target.
         "last_color": {
             "led1": _last_shown_color(strips, ["led1"]),
             "led2": _last_shown_color(strips, ["led2"]),

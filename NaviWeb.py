@@ -5,7 +5,7 @@ by a single process. Requests only queue commands; the main loop runs them the
 same way as spoken ones.
 
 API (all require the token, as "Authorization: Bearer <token>" or ?token=):
-  GET  /api/state                       strips, shutdown countdown, colour names
+  GET  /api/state                       strips, shutdown countdown, color names
   POST /api/lights  {"target": "both|bed|wall", "power": "on|off",
                      "color": "<name>" or [r, g, b]}
   POST /api/pc      {"action": "on|shutdown|cancel"}
