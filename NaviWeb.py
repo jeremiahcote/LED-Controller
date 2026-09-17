@@ -21,7 +21,25 @@ from urllib.parse import parse_qs, urlparse
 
 PORT = 8765
 TOKEN_PATH = os.path.expanduser("~/.config/navi/web_token")
-PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "navi_web.html")
+WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+PAGE_PATH = os.path.join(WEB_DIR, "index.html")
+
+# Bundled files served without the token (nothing secret in them).
+STATIC_FILES = {
+    "/navi.png": "image/png",
+    "/favicon.png": "image/png",
+    "/icon-180.png": "image/png",
+    "/icon-512.png": "image/png",
+    "/manifest.webmanifest": "application/manifest+json",
+}
+
+# Optional personal artwork, kept on the Pi only (this repo is public):
+#   background.jpg / .png / .webp  -> page background
+#   icon.png                        -> home-screen icon and favicon
+CUSTOM_DIR = os.path.expanduser("~/.config/navi/web")
+CUSTOM_BACKGROUNDS = (("background.jpg", "image/jpeg"), ("background.jpeg", "image/jpeg"),
+                      ("background.png", "image/png"), ("background.webp", "image/webp"))
+CUSTOM_ICON_PATHS = ("/icon-180.png", "/icon-512.png", "/favicon.png")
 
 TARGETS = {"both": "both", "bed": "led1", "wall": "led2"}
 PC_ACTIONS = ("on", "shutdown", "cancel")
@@ -42,6 +60,19 @@ def load_or_create_token():
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(token + "\n")
     return token
+
+
+def _custom_background():
+    for name, content_type in CUSTOM_BACKGROUNDS:
+        path = os.path.join(CUSTOM_DIR, name)
+        if os.path.isfile(path):
+            return path, content_type
+    return None
+
+
+def _read(path):
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def _parse_color(value, colors):
@@ -94,8 +125,25 @@ def start(submit, get_state, wake_pc, colors, port=PORT):
         def do_GET(self):
             path = urlparse(self.path).path
             if path == "/":
-                with open(PAGE_PATH, "rb") as f:
-                    self._send(HTTPStatus.OK, f.read(), "text/html; charset=utf-8")
+                page = _read(PAGE_PATH)
+                if _custom_background():
+                    page = page.replace(b'data-custom-bg=""', b'data-custom-bg="1"', 1)
+                self._send(HTTPStatus.OK, page, "text/html; charset=utf-8")
+                return
+            if path == "/custom/background":
+                found = _custom_background()
+                if found:
+                    self._send(HTTPStatus.OK, _read(found[0]), found[1])
+                else:
+                    self._send(HTTPStatus.NOT_FOUND, {"error": "no custom background"})
+                return
+            if path in STATIC_FILES:
+                custom_icon = os.path.join(CUSTOM_DIR, "icon.png")
+                if path in CUSTOM_ICON_PATHS and os.path.isfile(custom_icon):
+                    self._send(HTTPStatus.OK, _read(custom_icon), "image/png")
+                else:
+                    self._send(HTTPStatus.OK, _read(os.path.join(WEB_DIR, path[1:])),
+                               STATIC_FILES[path])
                 return
             if not self._authorized():
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "missing or wrong token"})

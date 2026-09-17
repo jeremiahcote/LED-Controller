@@ -309,7 +309,12 @@ def snapshot_strip_states():
 def remember_strip_state(target, power, rgb):
     with strip_states_lock:
         for strip in (("led1", "led2") if target == "both" else (target,)):
-            strip_states[strip] = {"power": power, "rgb": list(rgb)}
+            # last_rgb survives turning off, so the web page can show (and "on"
+            # can restore) the colour a strip had before.
+            previous = strip_states.get(strip, DEFAULT_STRIP_STATE)
+            last_rgb = (list(rgb) if power == "on" and any(rgb)
+                        else previous.get("last_rgb", previous["rgb"]))
+            strip_states[strip] = {"power": power, "rgb": list(rgb), "last_rgb": last_rgb}
         snapshot = json.dumps(strip_states)
     tmp = STATE_PATH + ".tmp"
     try:
@@ -638,7 +643,8 @@ async def command_loop(commands, shared):
 
 def _last_shown_color(strips, names):
     for name in names:
-        rgb = tuple(strips.get(name, DEFAULT_STRIP_STATE)["rgb"])
+        state = strips.get(name, DEFAULT_STRIP_STATE)
+        rgb = tuple(state.get("last_rgb", state["rgb"]))
         if any(rgb):
             return rgb
     return tuple(DEFAULT_STRIP_STATE["rgb"])
@@ -647,12 +653,18 @@ def _last_shown_color(strips, names):
 def web_state(shared):
     strips = snapshot_strip_states()
     shutdown = shared.get("shutdown")
+    # Read once: a cancel can clear it from another thread at any moment.
+    requested_at = shutdown.requested_at if shutdown else None
+    pending = requested_at is not None and bool(shutdown.pending())
     return {
         "strips": {
             "bed": strips.get("led1", DEFAULT_STRIP_STATE),
             "wall": strips.get("led2", DEFAULT_STRIP_STATE),
         },
-        "shutdown_pending": bool(shutdown and shutdown.pending()),
+        "shutdown_pending": pending,
+        "shutdown_seconds_left": (
+            max(0, round(PCControl.SHUTDOWN_DELAY - (time.monotonic() - requested_at)))
+            if pending else None),
         # What "on" with no colour should use for each target.
         "last_color": {
             "led1": _last_shown_color(strips, ["led1"]),

@@ -21,7 +21,7 @@ identifiers instead (see `LEDControllerMacOS.py`).
 | `LEDStartupWindows.py` | Turns the strips cyan; was run by a Windows logon task (now disabled) |
 | `LEDVoiceControl.py` | Voice control ("Navi") |
 | `PCControl.py` | Turns the PC on (Wake-on-LAN) and off (SSH) |
-| `NaviWeb.py`, `navi_web.html` | Navi's web page and JSON API |
+| `NaviWeb.py`, `web/` | Navi's web page and JSON API (`web/make_icons.py` redraws the icons; needs Pillow) |
 | `navi-voice.service` | systemd user service that runs voice control on the Pi |
 | `testMAC.py` | Scans for Bluetooth devices and prints their addresses |
 
@@ -61,9 +61,12 @@ that's still running.
 
 ## Web interface and API
 
-Navi serves a phone-friendly control page at **http://navi.local:8765**
-(lights per strip, scenes, PC on / shut down / cancel). On iPhone, Share →
-Add to Home Screen makes it app-like. It runs inside the voice service, so web
+Navi serves a phone-friendly control page at **http://navi.local:8765**:
+an on/off switch per strip (lit in the strip's current or last colour), a
+colour wheel with shades plus a precise picker (drag for any RGB value, or
+type R/G/B/hex), and PC power on / shut down with a live cancel countdown.
+Tap a strip's card to choose which strips a colour goes to. On iPhone, Share →
+Add to Home Screen installs it with Navi's icon. It runs inside the voice service, so web
 and voice commands share one queue and never fight over Bluetooth.
 
 Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
@@ -72,12 +75,28 @@ Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
 
 | Request | Body |
 |---|---|
-| `GET /api/state` | — (strip states, shutdown countdown, colour names) |
+| `GET /api/state` | — (strip states incl. `last_rgb`, `shutdown_pending`, `shutdown_seconds_left`, colour names) |
 | `POST /api/lights` | `{"target": "both"\|"bed"\|"wall", "power": "on"\|"off", "color": "cyan"}` (`color` optional, or `[r, g, b]`) |
 | `POST /api/pc` | `{"action": "on"\|"shutdown"\|"cancel"}` |
 
 For an iPhone Shortcut, use **Get Contents of URL**: method POST, header
 `Authorization: Bearer <token>`, request body JSON as above.
+
+### Your own artwork
+
+The page's fairy and starfield are original artwork. To use your own images
+without putting them in this public repo, copy them to the Pi:
+
+```bash
+mkdir -p ~/.config/navi/web
+# any of background.jpg / background.png / background.webp
+scp my-background.jpg navi:~/.config/navi/web/background.jpg
+# square PNG, 512x512 or so: home-screen icon and favicon
+scp my-icon.png navi:~/.config/navi/web/icon.png
+```
+
+They're picked up on the next page load; no restart needed. After changing the
+icon, remove and re-add the home-screen shortcut, since iOS caches it.
 
 ### Away from home (Tailscale)
 
