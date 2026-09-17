@@ -35,7 +35,10 @@ seconds after saying "Navi" on its own.
 - "Navi, good morning" / "Navi, I'm home" → both cyan
 - "Navi, good night" / "Navi, goodbye" → both off
 - "Navi, turn on / boot up / wake up / start my computer" → Wake-on-LAN
-- "Navi, shut down / turn off my computer" → PC shuts down after 30 seconds.
+- "Navi, shut down / turn off my computer, *passphrase*" → PC shuts down after 30 seconds.
+  The passphrase is kept only on the Pi in `~/.config/navi/shutdown_passphrase`
+  (one line of words, `chmod 600`), never in this repo, and is masked in logs.
+  Without it the request is ignored; without the file, voice shutdown is off.
   The bed lights flash for 2 seconds at the start and again at 15 seconds (red,
   or off if they're already red), then return to what Navi last set them to.
   Needs "shut down" or "turn … off"; a lone "off" does nothing.

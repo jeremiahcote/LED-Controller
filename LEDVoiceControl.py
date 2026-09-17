@@ -82,6 +82,42 @@ PC_ON_WORDS = ["on", "wake", "start", "boot"]
 # false match closes everything on the PC.
 PC_SHUTDOWN_PAIRS = [("shut", "down"), ("turn", "off")]
 
+# A voice shutdown also has to include a passphrase, so someone else in the room
+# can't do it. It lives only on the machine running Navi -- this repository is
+# public -- as one line of plain words in this file. Without the file, voice
+# shutdown is disabled (the web interface's token-protected button still works).
+SHUTDOWN_PASSPHRASE_PATH = os.path.expanduser("~/.config/navi/shutdown_passphrase")
+
+
+def load_shutdown_passphrase():
+    try:
+        with open(SHUTDOWN_PASSPHRASE_PATH, encoding="utf-8") as f:
+            words = f.read().lower().split()
+    except OSError:
+        return []
+    return words
+
+
+SHUTDOWN_PASSPHRASE = load_shutdown_passphrase()
+
+
+def has_passphrase(words):
+    # Compared with spaces removed, since the recognizer may split a word the
+    # way it's written in the file ("sunflower" -> "sun flower") or join one.
+    return bool(SHUTDOWN_PASSPHRASE) and "".join(SHUTDOWN_PASSPHRASE) in "".join(words)
+
+
+def masked(text):
+    """Text safe to log: any word that is, or is part of, the passphrase is hidden."""
+    secret = "".join(SHUTDOWN_PASSPHRASE)
+    if not secret:
+        return text
+    return " ".join(
+        "***" if len(w) >= 3 and w in secret else w
+        for w in text.split()
+    )
+
+
 # While the PC counts down to shutting down, the bed lights flash red for
 # FLASH_SECONDS at each of these points (seconds after the request) and then go
 # back to what they were showing. It's the warning you'll notice mid-game,
@@ -126,6 +162,7 @@ GRAMMAR = (
     + list(COLORS)
     + [word for phrase in COMPOUND_COLORS for word in phrase.split()]
     + list(PHRASES)
+    + SHUTDOWN_PASSPHRASE
     + ["[unk]"]
 )
 
@@ -171,7 +208,7 @@ def parse(text):
 
     if any(w in words for w in PC_WORDS):
         if any(a in words and b in words for a, b in PC_SHUTDOWN_PAIRS):
-            return ("shutdown",)
+            return ("shutdown",) if has_passphrase(words) else ("shutdown_denied",)
         if "shut" in words or "off" in words:
             # Sounds like a shutdown but doesn't meet the bar above; don't fall
             # through and treat it as "on".
@@ -459,7 +496,7 @@ def _listen(commands):
             request = after_wake_word(text)
             if request is None:
                 if now > awake_until:
-                    print(f"  (no wake word, ignored: {text!r})")
+                    print(f"  (no wake word, ignored: {masked(text)!r})")
                     continue
                 # Follow-up to a bare "navi" said moments ago.
                 request = " ".join(w for w in text.split() if w != "[unk]")
@@ -472,20 +509,26 @@ def _listen(commands):
             awake_until = 0.0
             command = parse(request)
             if command is None:
-                print(f"  (not a command: {text!r})")
+                print(f"  (not a command: {masked(text)!r})")
+                continue
+
+            if command[0] == "shutdown_denied":
+                # Deliberately doesn't echo what was heard, so the log doesn't
+                # help anyone guess the passphrase.
+                print("heard a PC shutdown request without the passphrase; ignored")
                 continue
 
             if command[0] == "pc_on":
                 # Handled right here: it's a single UDP send, no Bluetooth.
                 PCControl.wake_pc()
-                print(f"heard: {text!r} -> sent wake packet to the PC")
+                print(f"heard: {masked(text)!r} -> sent wake packet to the PC")
                 continue
 
             if command[0] == "lights":
                 _, power, rgb, target = command
-                print(f"heard: {text!r} -> {power} rgb={rgb} target={target}")
+                print(f"heard: {masked(text)!r} -> {power} rgb={rgb} target={target}")
             else:
-                print(f"heard: {text!r} -> {command[0]}")
+                print(f"heard: {masked(text)!r} -> {command[0]}")
             commands.put(command)
 
 
