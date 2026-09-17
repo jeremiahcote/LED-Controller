@@ -67,6 +67,23 @@ Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
 For an iPhone Shortcut, use **Get Contents of URL**: method POST, header
 `Authorization: Bearer <token>`, request body JSON as above.
 
+### Away from home (Tailscale)
+
+Navi and the iPhone are on a private Tailscale network, so the page works from
+anywhere at **http://navi:8765** (or `http://100.78.39.51:8765`) with the
+Tailscale app switched on. Nothing is exposed to the internet. The page on
+`navi` is a different origin from `navi.local`, so it asks for the token once.
+
+Setup on the Pi:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up   # open the printed link and sign in
+```
+
+Then in the Tailscale admin console, **Disable key expiry** for `navi`, or it
+has to sign in again every 180 days.
+
 ## Raspberry Pi setup (Navi)
 
 Pi 4 running Raspberry Pi OS (Debian 13 "Trixie", 64-bit), user `admin`, with a
