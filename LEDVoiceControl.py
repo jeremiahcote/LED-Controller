@@ -90,6 +90,8 @@ PC_SHUTDOWN_PAIRS = [("shut", "down"), ("turn", "off")]
 # adversary, and the point is it's quick to say.
 LOCKDOWN_WORD = "lockdown"
 UNLOCK_CONTROLS_WORDS = ("unlock", "controls")
+# Set while locked down. Shared with the web page, which can show and flip it.
+VOICE_LOCKED = threading.Event()
 
 # A voice shutdown or PC unlock/wake also has to include a passphrase, so
 # someone else in the room can't do it. Each lives only on the machine running
@@ -501,9 +503,6 @@ def _listen(commands):
         last_text = None
         last_text_at = 0.0
         awake_until = 0.0
-        # While set, every command but "Navi, unlock controls" is ignored.
-        locked_down = False
-
         while True:
             try:
                 data = audio.get(timeout=AUDIO_STALL_TIMEOUT)
@@ -547,18 +546,19 @@ def _listen(commands):
                 continue
 
             if command[0] == "unlock_controls":
-                # Handled here regardless of locked_down: it's the only way out.
-                was_locked, locked_down = locked_down, False
+                # Handled here regardless of the lock: it's the only way out.
+                was_locked = VOICE_LOCKED.is_set()
+                VOICE_LOCKED.clear()
                 print(f"heard: {masked(text)!r} -> "
                       f"{'lockdown lifted' if was_locked else 'unlock controls (not locked)'}")
                 continue
 
-            if locked_down:
+            if VOICE_LOCKED.is_set():
                 print(f"  (locked down, ignored: {masked(text)!r})")
                 continue
 
             if command[0] == "lockdown":
-                locked_down = True
+                VOICE_LOCKED.set()
                 print(f"heard: {masked(text)!r} -> lockdown engaged")
                 continue
 
@@ -673,6 +673,11 @@ def wake_pc():
     request_pc_recheck()
 
 
+def set_voice_lock(locked):
+    (VOICE_LOCKED.set if locked else VOICE_LOCKED.clear)()
+    print(f"voice lock {'engaged' if locked else 'lifted'} from the web page")
+
+
 def request_pc_recheck():
     global _pc_recheck_until
     _pc_recheck_until = time.monotonic() + 120
@@ -691,6 +696,7 @@ def web_state(shared):
             "wall": strips.get("led2", DEFAULT_STRIP_STATE),
         },
         "pc_on": shared.get("pc_on"),
+        "voice_locked": VOICE_LOCKED.is_set(),
         "shutdown_pending": pending,
         "shutdown_seconds_left": (
             max(0, round(PCControl.SHUTDOWN_DELAY - (time.monotonic() - requested_at)))
@@ -717,6 +723,7 @@ def main():
         submit=commands.put,
         get_state=lambda: web_state(shared),
         wake_pc=wake_pc,
+        set_voice_lock=set_voice_lock,
         colors=COLORS,
     )
 

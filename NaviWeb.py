@@ -9,6 +9,7 @@ API (all require the token, as "Authorization: Bearer <token>" or ?token=):
   POST /api/lights  {"target": "both|bed|wall", "power": "on|off",
                      "color": "<name>" or [r, g, b]}
   POST /api/pc      {"action": "on|shutdown|cancel"}
+  POST /api/lock    {"locked": true|false}   voice lockdown, as "Navi, lockdown"
 """
 import hmac
 import json
@@ -84,7 +85,7 @@ def _parse_color(value, colors):
     return None
 
 
-def start(submit, get_state, wake_pc, colors, port=PORT):
+def start(submit, get_state, wake_pc, set_voice_lock, colors, port=PORT):
     """Serve the page and API on a daemon thread.
 
     submit(command) queues a command tuple for the main loop; get_state()
@@ -196,6 +197,15 @@ def start(submit, get_state, wake_pc, colors, port=PORT):
                 else:
                     submit((action,))
                 self._send(HTTPStatus.ACCEPTED, {"queued": f"pc {action}"})
+                return
+
+            if path == "/api/lock":
+                locked = body.get("locked")
+                if not isinstance(locked, bool):
+                    self._send(HTTPStatus.BAD_REQUEST, {"error": "locked must be true or false"})
+                    return
+                set_voice_lock(locked)
+                self._send(HTTPStatus.OK, {"voice_locked": locked})
                 return
 
             self._send(HTTPStatus.NOT_FOUND, {"error": "not found"})

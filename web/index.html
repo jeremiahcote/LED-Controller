@@ -242,6 +242,15 @@
   .powerswitch[data-state="on"] .lbl.on, .powerswitch[data-state="off"] .lbl.off { cursor: default; }
   .powerswitch .lbl:not([data-active="true"]):hover { color: #93a4c6; }
   .powerswitch.busy { opacity: .45; pointer-events: none; }
+  .lockswitch { margin-top: 14px; height: 50px; }
+  .lockswitch .lbl { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+  .lockswitch .lbl svg { width: 14px; height: 14px; flex: none; }
+  .lockswitch[data-state="locked"] .knob { transform: translateX(100%); }
+  .lockswitch[data-state="unlocked"] .lbl.unlocked { color: #a8e4ff; text-shadow: 0 0 8px rgba(86, 200, 255, .9), 0 0 20px rgba(86, 200, 255, .5); }
+  .lockswitch[data-state="locked"] .lbl.locked { color: #ffd98a; text-shadow: 0 0 8px rgba(255, 190, 70, .9), 0 0 20px rgba(255, 170, 40, .5); }
+  .lockswitch[data-state="unlocked"] .lbl.unlocked, .lockswitch[data-state="locked"] .lbl.locked { cursor: default; }
+  .lock-foot { margin-top: 8px; text-align: center; color: var(--faint); font-size: 12.5px; }
+  #lightsCard.voice-locked .lock-foot { color: #d9b56a; }
   .pc-foot { margin-top: 10px; text-align: center; color: var(--faint); font-size: 12.5px; }
   .countdown { display: none; align-items: center; gap: 14px; margin-bottom: 14px; padding: 12px 14px;
     border-radius: 16px; border: 1px solid rgba(255, 93, 108, .4); background: rgba(80, 14, 26, .45); }
@@ -334,6 +343,16 @@
         </button>
       </article>
     </div>
+    <div class="powerswitch lockswitch" id="lockSwitch" data-state="unlocked">
+      <span class="knob"></span>
+      <button class="lbl unlocked" type="button" id="unlockBtn" aria-label="Unlock voice control">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>UNLOCKED
+      </button>
+      <button class="lbl locked" type="button" id="lockBtn" aria-label="Lock voice control">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>LOCKED
+      </button>
+    </div>
+    <div class="lock-foot" id="lockFoot">Voice commands are on</div>
   </section>
 
   <section class="card" id="colorCard">
@@ -822,6 +841,33 @@ $("#pcCancel").addEventListener("click", () => {
   renderCountdown();
   send("/api/pc", { action: "cancel" }, "Shutdown cancelled");
 });
+let voiceLocked = false;
+let lockPendingUntil = 0;
+function renderLock() {
+  $("#lockSwitch").dataset.state = voiceLocked ? "locked" : "unlocked";
+  $("#lightsCard").classList.toggle("voice-locked", voiceLocked);
+  $("#lockFoot").textContent = voiceLocked
+    ? "Navi ignores voice commands until unlocked here or “Navi, unlock controls”"
+    : "Voice commands are on";
+}
+async function setLock(locked) {
+  if (locked === voiceLocked) return;
+  voiceLocked = locked;
+  lockPendingUntil = Date.now() + 5000;
+  renderLock();
+  try {
+    await api("/api/lock", { locked });
+    toast(locked ? "Voice control locked" : "Voice control unlocked");
+  } catch (e) {
+    voiceLocked = !locked;
+    lockPendingUntil = 0;
+    renderLock();
+    toast(e.message === "Failed to fetch" ? "Navi is offline" : e.message, true);
+  }
+}
+$("#lockBtn").addEventListener("click", () => setLock(true));
+$("#unlockBtn").addEventListener("click", () => setLock(false));
+
 let pcOn = null;
 function renderPc() {
   const state = pcOn === null ? "unknown" : pcOn ? "on" : "off";
@@ -860,6 +906,10 @@ async function refresh() {
     serverStrips = state.strips || {};
     pcOn = typeof state.pc_on === "boolean" ? state.pc_on : null;
     renderPc();
+    if (Date.now() > lockPendingUntil && typeof state.voice_locked === "boolean") {
+      voiceLocked = state.voice_locked;
+      renderLock();
+    }
     if (state.shutdown_pending && typeof state.shutdown_seconds_left === "number") {
       countdownEnd = Date.now() + state.shutdown_seconds_left * 1000;
     } else if (!state.shutdown_pending && countdownEnd && countdownEnd - Date.now() < 27000) {

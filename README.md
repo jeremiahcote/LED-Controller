@@ -53,7 +53,8 @@ seconds after saying "Navi" on its own.
 - "Navi, lockdown" → ignores every voice command (lights, PC, cancel, all of it)
   until someone says "Navi, unlock controls". Meant for when someone else is in
   the room and shouldn't be able to touch anything by voice; it isn't itself
-  passphrase-protected, so anyone who knows Navi can lift it.
+  passphrase-protected, so anyone who knows Navi can lift it. The web page has
+  a LOCKED / UNLOCKED switch for the same lock.
 
 Colors: red, green, blue, cyan, light blue, sky blue, purple, pink, yellow,
 orange, white. No "bed"/"wall" means both strips. A new command interrupts one
@@ -81,6 +82,7 @@ Every API call needs the token stored on the Pi at `~/.config/navi/web_token`
 | `GET /api/state` | — (strip states incl. `last_rgb`, `pc_on`, `shutdown_pending`, `shutdown_seconds_left`, color names) |
 | `POST /api/lights` | `{"target": "both"\|"bed"\|"wall", "power": "on"\|"off", "color": "cyan"}` (`color` optional, or `[r, g, b]`) |
 | `POST /api/pc` | `{"action": "on"\|"shutdown"\|"cancel"}` |
+| `POST /api/lock` | `{"locked": true\|false}` (same as "Navi, lockdown" / "Navi, unlock controls") |
 
 For an iPhone Shortcut, use **Get Contents of URL**: method POST, header
 `Authorization: Bearer <token>`, request body JSON as above.
